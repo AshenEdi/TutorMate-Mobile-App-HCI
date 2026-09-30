@@ -1,264 +1,92 @@
+import React, { useState } from 'react';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { Link, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import {
-  Alert,
-  Image,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-
-type RoleType = 'Student' | 'Tutor' | 'Admin';
 
 export default function LoginScreen() {
-  const router = useRouter();
-  const [selectedRole, setSelectedRole] = useState<RoleType>('Student');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
 
   const handleLogin = () => {
-    if (!email || !password) {
-      Alert.alert('Login', 'Please enter your email/username and password.');
-      return;
-    }
-    Alert.alert('Welcome Back!', `Logged in as ${selectedRole}: ${email}`);
+    // In a real app, perform authentication here.
+    // For now, just navigate to the main tabs:
+    router.replace('/(tabs)/index');
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled">
-        <View style={styles.container}>
-          {/* Top Bar Navigation */}
-          <View style={styles.topBar}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              style={styles.backButton}
-              onPress={() => {
-                if (router.canGoBack()) {
-                  router.back();
-                } else {
-                  router.push('/welcome');
-                }
-              }}>
-              <Ionicons name="arrow-back" size={22} color="#0F172A" />
-            </TouchableOpacity>
-
-            <View style={styles.headerTitleRow}>
-              <View style={styles.logoBadge}>
-                <Ionicons name="book" size={18} color="#FFFFFF" />
-              </View>
-              <Text style={styles.headerTitle}>Login</Text>
-            </View>
-          </View>
-
-          {/* Banner Welcome Back Card */}
-          <View style={styles.bannerCard}>
-            <View style={styles.bannerLeft}>
-              <Text style={styles.bannerTag}>TUTORMATE PORTAL</Text>
-              <Text style={styles.bannerTitle}>Welcome Back!</Text>
-              <Text style={styles.bannerSubtitle}>
-                Ready to catch up on your learning goals today?
-              </Text>
-            </View>
-
-            <View style={styles.bannerRight}>
-              <Image
-                source={{
-                  uri: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=300',
-                }}
-                style={styles.bannerImage}
-                resizeMode="cover"
-              />
-            </View>
-          </View>
-
-          {/* Role Selector Tabs */}
-          <View style={styles.roleContainer}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[
-                styles.roleTab,
-                selectedRole === 'Student' ? styles.roleTabActive : styles.roleTabInactive,
-              ]}
-              onPress={() => setSelectedRole('Student')}>
-              <Ionicons
-                name={selectedRole === 'Student' ? 'person' : 'person-outline'}
-                size={16}
-                color={selectedRole === 'Student' ? '#FFFFFF' : '#0052CC'}
-              />
-              <Text
-                style={[
-                  styles.roleText,
-                  selectedRole === 'Student' ? styles.roleTextActive : styles.roleTextInactive,
-                ]}>
-                Student
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[
-                styles.roleTab,
-                selectedRole === 'Tutor' ? styles.roleTabActive : styles.roleTabInactive,
-              ]}
-              onPress={() => setSelectedRole('Tutor')}>
-              <Ionicons
-                name={selectedRole === 'Tutor' ? 'people' : 'people-outline'}
-                size={16}
-                color={selectedRole === 'Tutor' ? '#FFFFFF' : '#0052CC'}
-              />
-              <Text
-                style={[
-                  styles.roleText,
-                  selectedRole === 'Tutor' ? styles.roleTextActive : styles.roleTextInactive,
-                ]}>
-                Tutor
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[
-                styles.roleTab,
-                selectedRole === 'Admin' ? styles.roleTabActive : styles.roleTabInactive,
-              ]}
-              onPress={() => setSelectedRole('Admin')}>
-              <Ionicons
-                name={selectedRole === 'Admin' ? 'shield-checkmark' : 'shield-outline'}
-                size={16}
-                color={selectedRole === 'Admin' ? '#FFFFFF' : '#0052CC'}
-              />
-              <Text
-                style={[
-                  styles.roleText,
-                  selectedRole === 'Admin' ? styles.roleTextActive : styles.roleTextInactive,
-                ]}>
-                Admin
-              </Text>
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+      >
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color="#0F172A" />
             </TouchableOpacity>
           </View>
 
-          {/* Form Fields */}
-          <View style={styles.formContainer}>
-            {/* Email Field */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Email or Username</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="person-outline" size={18} color="#94A3B8" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="student@email.com"
-                  placeholderTextColor="#94A3B8"
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                />
-              </View>
+          {/* Title Section */}
+          <View style={styles.titleSection}>
+            <Text style={styles.title}>Welcome Back 👋</Text>
+            <Text style={styles.subtitle}>Sign in to continue your learning journey.</Text>
+          </View>
+
+          {/* Form Section */}
+          <View style={styles.formSection}>
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Email Address</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your email"
+                placeholderTextColor="#94A3B8"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={email}
+                onChangeText={setEmail}
+              />
             </View>
 
-            {/* Password Field */}
-            <View style={styles.inputGroup}>
-              <View style={styles.passwordHeader}>
-                <Text style={styles.inputLabel}>Password</Text>
-                <TouchableOpacity activeOpacity={0.7} onPress={() => Alert.alert('Forgot Password', 'Password reset instructions have been sent to your email.')}>
-                  <Text style={styles.forgotText}>Forgot password?</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="lock-closed-outline" size={18} color="#94A3B8" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Enter your password"
-                  placeholderTextColor="#94A3B8"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                />
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => setShowPassword(!showPassword)}
-                  style={styles.eyeButton}>
-                  <Ionicons
-                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                    size={18}
-                    color="#64748B"
-                  />
-                </TouchableOpacity>
-              </View>
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Password</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your password"
+                placeholderTextColor="#94A3B8"
+                secureTextEntry
+                value={password}
+                onChangeText={setPassword}
+              />
             </View>
 
-            {/* Remember Me Option */}
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={styles.rememberRow}
-              onPress={() => setRememberMe(!rememberMe)}>
-              <View style={[styles.checkbox, rememberMe && styles.checkboxSelected]}>
-                {rememberMe && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
-              </View>
-              <Text style={styles.rememberText}>Remember me on this device</Text>
+            <TouchableOpacity style={styles.forgotPassword}>
+              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
             </TouchableOpacity>
 
-            {/* Login Primary Button */}
-            <TouchableOpacity
-              activeOpacity={0.85}
-              style={styles.loginButton}
-              onPress={handleLogin}>
-              <Text style={styles.loginButtonText}>Login</Text>
-              <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+            <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
+              <Text style={styles.loginButtonText}>Log In</Text>
             </TouchableOpacity>
+          </View>
 
-            {/* Divider */}
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* Google Sign In Button */}
-            <TouchableOpacity
-              activeOpacity={0.85}
-              style={styles.googleButton}
-              onPress={() => Alert.alert('Google Sign-In', 'Google authentication initiated.')}>
-              <View style={styles.googleIconCircle}>
-                <Text style={styles.googleG}>G</Text>
-              </View>
-              <Text style={styles.googleButtonText}>Continue with Google</Text>
-            </TouchableOpacity>
-
-            {/* Register Link */}
-            <View style={styles.registerFooter}>
-              <Text style={styles.registerPrefix}>{"Don't have an account? "}</Text>
-              <TouchableOpacity activeOpacity={0.7} onPress={() => router.push('/student_register')}>
-                <Text style={styles.registerText}>Register</Text>
+          {/* Footer Section */}
+          <View style={styles.footerSection}>
+            <Text style={styles.footerText}>Don't have an account? </Text>
+            <Link href="/signup" asChild>
+              <TouchableOpacity>
+                <Text style={styles.footerLink}>Sign Up</Text>
               </TouchableOpacity>
-            </View>
-
-            {/* Safety Badge */}
-            <View style={styles.safetyBadge}>
-              <Ionicons name="shield-checkmark-outline" size={16} color="#0D9488" />
-              <Text style={styles.safetyText}>Verified student & mentor safety protection</Text>
-            </View>
+            </Link>
           </View>
-        </View>
-      </ScrollView>
+
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
