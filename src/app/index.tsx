@@ -85,17 +85,10 @@ export default function OnboardingScreen() {
 
         {/* Buttons Section */}
         <View style={styles.buttonContainer}>
-          <Link href="/login" asChild>
+          <Link href="/(tabs)" asChild>
             <TouchableOpacity style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>Log In</Text>
+              <Text style={styles.primaryButtonText}>Get Started</Text>
               <Ionicons name="arrow-forward" size={20} color="#fff" style={{ marginLeft: 8 }} />
-            </TouchableOpacity>
-          </Link>
-
-          <Link href="/signup" asChild>
-            <TouchableOpacity style={styles.secondaryButton}>
-              <Ionicons name="person-add-outline" size={20} color="#0B57D0" style={{ marginRight: 8 }} />
-              <Text style={styles.secondaryButtonText}>Create Free Account</Text>
             </TouchableOpacity>
           </Link>
         </View>
