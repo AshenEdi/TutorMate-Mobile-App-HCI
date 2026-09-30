@@ -10,7 +10,7 @@ export default function LoginScreen() {
   const handleLogin = () => {
     // In a real app, perform authentication here.
     // For now, just navigate to the main tabs:
-    router.replace('/(tabs)/index');
+    router.replace('/(tabs)');
   };
 
   return (
@@ -92,298 +92,98 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    padding: 24,
   },
-  container: {
-    width: '100%',
-    maxWidth: 400,
-    gap: 16,
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  header: {
+    marginTop: 10,
+    marginBottom: 32,
   },
   backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
     backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  headerTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  logoBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: '#1D61F2',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  bannerCard: {
-    backgroundColor: '#E4EFFF',
     borderRadius: 20,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    overflow: 'hidden',
-    position: 'relative',
-    borderWidth: 1,
-    borderColor: '#DBEAFE',
-  },
-  bannerLeft: {
-    flex: 1,
-    paddingRight: 8,
-    gap: 4,
-  },
-  bannerTag: {
-    fontSize: 10.5,
-    fontWeight: '800',
-    color: '#1D61F2',
-    letterSpacing: 0.6,
-  },
-  bannerTitle: {
-    fontSize: 21,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  bannerSubtitle: {
-    fontSize: 12.5,
-    color: '#475569',
-    lineHeight: 17,
-    marginTop: 2,
-  },
-  bannerRight: {
-    width: 76,
-    height: 76,
-    borderRadius: 14,
-    overflow: 'hidden',
-    backgroundColor: '#BFDBFE',
-  },
-  bannerImage: {
-    width: '100%',
-    height: '100%',
-  },
-  roleContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#EEF5FF',
-    borderRadius: 25,
-    padding: 4,
-    gap: 6,
-  },
-  roleTab: {
-    flex: 1,
-    height: 38,
-    borderRadius: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-  },
-  roleTabActive: {
-    backgroundColor: '#0052CC',
-  },
-  roleTabInactive: {
-    backgroundColor: '#EEF5FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  roleText: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  roleTextActive: {
-    color: '#FFFFFF',
-  },
-  roleTextInactive: {
-    color: '#0052CC',
-  },
-  formContainer: {
-    gap: 14,
-  },
-  inputGroup: {
-    gap: 6,
-  },
-  inputLabel: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  passwordHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-  },
-  forgotText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#0052CC',
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    height: 48,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  inputIcon: {
-    marginRight: 8,
+  titleSection: {
+    marginBottom: 32,
   },
-  textInput: {
-    flex: 1,
-    fontSize: 14,
+  title: {
+    fontSize: 28,
+    fontWeight: '800',
     color: '#0F172A',
-    height: '100%',
+    marginBottom: 8,
   },
-  eyeButton: {
-    padding: 4,
-  },
-  rememberRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginVertical: 2,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#F8FAFC',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  checkboxSelected: {
-    backgroundColor: '#0052CC',
-    borderColor: '#0052CC',
-  },
-  rememberText: {
-    fontSize: 13,
-    color: '#475569',
-  },
-  loginButton: {
-    height: 50,
-    backgroundColor: '#0052CC',
-    borderRadius: 25,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#0052CC',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 3,
-      },
-      web: {
-        boxShadow: '0px 4px 12px rgba(0, 82, 204, 0.2)',
-      },
-    }),
-  },
-  loginButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginVertical: 4,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#E2E8F0',
-  },
-  dividerText: {
-    fontSize: 12.5,
-    color: '#94A3B8',
-  },
-  googleButton: {
-    height: 50,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 25,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-  },
-  googleIconCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#EA4335',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  googleG: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-    fontSize: 13,
-  },
-  googleButtonText: {
+  subtitle: {
     fontSize: 15,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  registerFooter: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  registerPrefix: {
-    fontSize: 13,
     color: '#64748B',
   },
-  registerText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0052CC',
+  formSection: {
+    marginBottom: 32,
   },
-  safetyBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  inputContainer: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: '#FFFFFF',
+    height: 56,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  forgotPassword: {
+    alignSelf: 'flex-end',
+    marginBottom: 32,
+  },
+  forgotPasswordText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0B57D0',
+  },
+  loginButton: {
+    backgroundColor: '#0B57D0',
+    height: 56,
+    borderRadius: 28,
     justifyContent: 'center',
-    backgroundColor: '#F0F7FF',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    gap: 6,
-    alignSelf: 'center',
-    marginTop: 6,
+    alignItems: 'center',
+    width: '100%',
+    shadowColor: '#0B57D0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  safetyText: {
-    fontSize: 11,
-    color: '#475569',
-    fontWeight: '500',
+  loginButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  footerSection: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 'auto',
+    paddingBottom: 20,
+  },
+  footerText: {
+    fontSize: 15,
+    color: '#64748B',
+  },
+  footerLink: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0B57D0',
   },
 });

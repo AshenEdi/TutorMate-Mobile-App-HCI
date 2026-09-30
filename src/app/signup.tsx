@@ -11,7 +11,7 @@ export default function SignupScreen() {
   const handleSignup = () => {
     // In a real app, perform account creation here.
     // For now, just navigate to the main tabs:
-    router.replace('/(tabs)/index');
+    router.replace('/(tabs)');
   };
 
   return (
