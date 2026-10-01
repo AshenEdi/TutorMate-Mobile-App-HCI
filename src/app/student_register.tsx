@@ -9,15 +9,18 @@ import {
   Platform,
   Alert,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useAuth } from '../context/AuthContext';
 
 type UserRole = 'student' | 'tutor';
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const { signUp, loading } = useAuth();
   const [role, setRole] = useState<UserRole>('student');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -40,20 +43,50 @@ export default function RegisterScreen() {
 
   const strengthScore = getPasswordStrength();
 
-  const handleRegister = () => {
-    if (!fullName || !email || !password || !confirmPassword) {
-      Alert.alert('Registration', 'Please fill in all required fields.');
+  const handleRegister = async () => {
+    const trimmedName = fullName.trim();
+    const trimmedEmail = email.trim();
+
+    if (!trimmedName || !trimmedEmail || !password || !confirmPassword) {
+      Alert.alert('Registration Error', 'Please fill in all required fields.');
       return;
     }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      Alert.alert('Registration Error', 'Please enter a valid email address.');
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert('Registration Error', 'Password must be at least 6 characters.');
+      return;
+    }
+
     if (password !== confirmPassword) {
-      Alert.alert('Registration', 'Passwords do not match.');
+      Alert.alert('Registration Error', 'Passwords do not match.');
       return;
     }
+
     if (!agreedTerms) {
-      Alert.alert('Registration', 'Please agree to the Terms of Service & Privacy Policy.');
+      Alert.alert('Registration Error', 'Please agree to the Terms of Service & Privacy Policy.');
       return;
     }
-    Alert.alert('Account Created!', `Welcome to TutorMate, ${fullName}!`);
+
+    const { error } = await signUp({
+      email: trimmedEmail,
+      password,
+      fullName: trimmedName,
+      role: 'student',
+    });
+
+    if (error) {
+      Alert.alert('Registration Failed', error);
+      return;
+    }
+
+    // Directly navigate to login page upon registration
+    router.replace('/login');
   };
 
   return (
@@ -273,10 +306,17 @@ export default function RegisterScreen() {
             {/* Register Primary Button */}
             <TouchableOpacity
               activeOpacity={0.85}
-              style={styles.registerButton}
-              onPress={handleRegister}>
-              <Text style={styles.registerButtonText}>Register</Text>
-              <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+              style={[styles.registerButton, loading && { opacity: 0.6 }]}
+              onPress={handleRegister}
+              disabled={loading}>
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Text style={styles.registerButtonText}>Register</Text>
+                  <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+                </>
+              )}
             </TouchableOpacity>
 
             {/* Divider */}

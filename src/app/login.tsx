@@ -1,6 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
+import { ActivityIndicator } from 'react-native';
+import {
+  useAuth
+} from '../context/AuthContext';
 import {
   Alert,
   Image,
@@ -18,18 +22,36 @@ type RoleType = 'Student' | 'Tutor' | 'Admin';
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { signIn, loading } = useAuth();
   const [selectedRole, setSelectedRole] = useState<RoleType>('Student');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
-  const handleLogin = () => {
-    if (!email || !password) {
-      Alert.alert('Login', 'Please enter your email/username and password.');
+  const handleLogin = async () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      Alert.alert('Login', 'Please enter your email and password.');
       return;
     }
-    Alert.alert('Welcome Back!', `Logged in as ${selectedRole}: ${email}`);
+
+    const { error, role: userRole } = await signIn(trimmedEmail, password);
+
+    if (error) {
+      Alert.alert('Login Failed', error);
+      return;
+    }
+
+    const effectiveRole = userRole || selectedRole.toLowerCase();
+
+    if (effectiveRole === 'admin') {
+      router.replace('/(admin)/dashboard');
+    } else if (effectiveRole === 'tutor') {
+      router.replace('/(tutor)/dashboard');
+    } else {
+      router.replace('/(student)/dashboard');
+    }
   };
 
   return (
@@ -213,10 +235,17 @@ export default function LoginScreen() {
             {/* Login Primary Button */}
             <TouchableOpacity
               activeOpacity={0.85}
-              style={styles.loginButton}
-              onPress={handleLogin}>
-              <Text style={styles.loginButtonText}>Login</Text>
-              <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+              style={[styles.loginButton, loading && styles.loginButtonDisabled]}
+              onPress={handleLogin}
+              disabled={loading}>
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Text style={styles.loginButtonText}>Login</Text>
+                  <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+                </>
+              )}
             </TouchableOpacity>
 
             {/* Divider */}
@@ -481,6 +510,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  loginButtonDisabled: {
+    opacity: 0.6,
   },
   dividerRow: {
     flexDirection: 'row',
