@@ -1,16 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import {
-  Image,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Image,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 // --- MOCK DATA ---
@@ -183,7 +183,11 @@ export default function MessagesInboxScreen() {
 
         <View style={styles.conversationsList}>
           {CONVERSATIONS.map((conv) => (
-            <TouchableOpacity key={conv.id} style={styles.conversationCard}>
+            <TouchableOpacity 
+              key={conv.id} 
+              style={styles.conversationCard}
+              onPress={() => router.push("/(student)/ChatConversation")}
+            >
               <View style={styles.convAvatarWrapper}>
                 {conv.isGroup ? (
                   <View style={styles.groupIconBg}>
