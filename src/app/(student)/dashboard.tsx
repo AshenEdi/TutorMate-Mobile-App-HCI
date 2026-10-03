@@ -3,6 +3,7 @@ import {
   Ionicons,
   MaterialCommunityIcons,
 } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
   Image,
@@ -138,6 +139,7 @@ const SESSIONS: SessionItem[] = [
 ];
 
 export default function StudentHomeScreen() {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("Home");
 
@@ -154,7 +156,10 @@ export default function StudentHomeScreen() {
           <Text style={styles.brandTitle}>Student Home</Text>
         </View>
 
-        <TouchableOpacity style={styles.profileAvatar}>
+        <TouchableOpacity
+          style={styles.profileAvatar}
+          onPress={() => router.push("/(student)/StudentProfile")}
+        >
           <Ionicons name="person" size={18} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
