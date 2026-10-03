@@ -120,7 +120,10 @@ export default function UserProfileScreen() {
             <Ionicons name="arrow-back" size={20} color="#1E293B" />
           </TouchableOpacity>
           <Text style={styles.pageHeaderTitle}>Account & Profile</Text>
-          <TouchableOpacity style={styles.iconBtn}>
+          <TouchableOpacity 
+            style={styles.iconBtn}
+            onPress={() => router.push("/(student)/EditStudentProfile")}
+          >
             <Ionicons name="pencil-outline" size={18} color="#1E293B" />
           </TouchableOpacity>
         </View>
