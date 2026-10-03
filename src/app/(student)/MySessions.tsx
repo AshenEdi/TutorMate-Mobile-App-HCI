@@ -301,7 +301,7 @@ export default function MySessionsScreen() {
           <Ionicons name="calendar" size={22} color="#2563EB" />
           <Text style={[styles.tabLabel, styles.tabLabelActive]}>Sessions</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/messages")}>
+        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/MessagesInbox")}>
           <Ionicons name="chatbox-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Messages</Text>
         </TouchableOpacity>

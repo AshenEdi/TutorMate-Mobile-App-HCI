@@ -209,7 +209,7 @@ export default function EditStudentProfileScreen() {
           <Ionicons name="calendar-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Sessions</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
+        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/MessagesInbox")}>
           <Ionicons name="chatbox-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Messages</Text>
         </TouchableOpacity>

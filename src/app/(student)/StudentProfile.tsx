@@ -402,6 +402,8 @@ export default function UserProfileScreen() {
                 router.push("/(student)/MySessions");
               } else if (tab.name === "Home") {
                 router.push("/(student)/dashboard");
+              } else if (tab.name === "Messages") {
+                router.push("/(student)/MessagesInbox");
               } else {
                 setActiveTab(tab.name);
               }
