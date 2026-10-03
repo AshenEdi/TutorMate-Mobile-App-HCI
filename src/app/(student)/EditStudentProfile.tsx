@@ -2,16 +2,16 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  Image,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Image,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 export default function EditStudentProfileScreen() {
@@ -205,7 +205,7 @@ export default function EditStudentProfileScreen() {
           <Ionicons name="search-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Search</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
+        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/MySessions")}>
           <Ionicons name="calendar-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Sessions</Text>
         </TouchableOpacity>

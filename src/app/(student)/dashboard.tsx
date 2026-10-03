@@ -420,7 +420,15 @@ export default function StudentHomeScreen() {
             <TouchableOpacity
               key={tab.name}
               style={styles.tabItem}
-              onPress={() => setActiveTab(tab.name)}
+              onPress={() => {
+                if (tab.name === "Sessions") {
+                  router.push("/(student)/MySessions");
+                } else if (tab.name === "Profile") {
+                  router.push("/(student)/StudentProfile");
+                } else {
+                  setActiveTab(tab.name);
+                }
+              }}
             >
               <Ionicons
                 name={(isActive ? tab.activeIcon : tab.icon) as any}
