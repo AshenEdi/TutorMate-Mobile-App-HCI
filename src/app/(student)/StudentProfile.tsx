@@ -366,7 +366,10 @@ export default function UserProfileScreen() {
         </View>
 
         {/* --- LOG OUT BUTTON --- */}
-        <TouchableOpacity style={styles.logoutBtn}>
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          onPress={() => router.replace("/welcome")}
+        >
           <Ionicons
             name="log-out-outline"
             size={18}
