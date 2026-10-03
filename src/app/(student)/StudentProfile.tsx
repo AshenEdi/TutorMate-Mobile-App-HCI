@@ -2,15 +2,15 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  Image,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Image,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 // --- TYPES ---
@@ -120,7 +120,10 @@ export default function UserProfileScreen() {
             <Ionicons name="arrow-back" size={20} color="#1E293B" />
           </TouchableOpacity>
           <Text style={styles.pageHeaderTitle}>Account & Profile</Text>
-          <TouchableOpacity style={styles.iconBtn}>
+          <TouchableOpacity 
+            style={styles.iconBtn}
+            onPress={() => router.push("/(student)/EditStudentProfile")}
+          >
             <Ionicons name="pencil-outline" size={18} color="#1E293B" />
           </TouchableOpacity>
         </View>
@@ -394,7 +397,17 @@ export default function UserProfileScreen() {
           <TouchableOpacity
             key={tab.name}
             style={styles.tabItem}
-            onPress={() => setActiveTab(tab.name)}
+            onPress={() => {
+              if (tab.name === "Sessions") {
+                router.push("/(student)/MySessions");
+              } else if (tab.name === "Home") {
+                router.push("/(student)/dashboard");
+              } else if (tab.name === "Messages") {
+                router.push("/(student)/MessagesInbox");
+              } else {
+                setActiveTab(tab.name);
+              }
+            }}
           >
             <Ionicons
               name={tab.icon as any}
