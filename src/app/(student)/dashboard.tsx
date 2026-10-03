@@ -1,21 +1,21 @@
 import {
-  FontAwesome5,
-  Ionicons,
-  MaterialCommunityIcons,
+    FontAwesome5,
+    Ionicons,
+    MaterialCommunityIcons,
 } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  Image,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Image,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 // --- TYPES ---
@@ -420,7 +420,19 @@ export default function StudentHomeScreen() {
             <TouchableOpacity
               key={tab.name}
               style={styles.tabItem}
-              onPress={() => setActiveTab(tab.name)}
+              onPress={() => {
+                if (tab.name === "Sessions") {
+                  router.push("/(student)/MySessions");
+                } else if (tab.name === "Profile") {
+                  router.push("/(student)/StudentProfile");
+                } else if (tab.name === "Messages") {
+                  router.push("/(student)/MessagesInbox");
+                } else if (tab.name === "Search") {
+                  router.push("/(student)/searchscreen");
+                } else {
+                  setActiveTab(tab.name);
+                }
+              }}
             >
               <Ionicons
                 name={(isActive ? tab.activeIcon : tab.icon) as any}
