@@ -38,7 +38,6 @@ export default function TutorProfileDetailsScreen() {
   const router = useRouter();
   const { signOut } = useAuth();
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('profile');
-  const [isEditing, setIsEditing] = useState<boolean>(false);
 
   const [profile, setProfile] = useState<TutorProfile>({
     fullName: 'Dr. Sarah Jenkins',
@@ -65,42 +64,11 @@ export default function TutorProfileDetailsScreen() {
     })();
   }, []);
 
-  const handleToggleEditSave = async () => {
-    if (isEditing) {
-      // Save flow
-      try {
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
-        // Supabase mutation example:
-        // const { error } = await supabase.from('profiles').upsert(profile);
-        // if (error) throw error;
-        Alert.alert('Profile Saved', 'Your tutor details have been updated successfully.');
-      } catch (err) {
-        console.error('Error saving profile:', err);
-        Alert.alert('Error', 'Unable to save profile changes.');
-      }
-      setIsEditing(false);
-    } else {
-      setIsEditing(true);
-    }
-  };
-
   const handleLogout = () => {
-    Alert.alert('Log out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Log out',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await signOut();
-            router.replace('/welcome');
-          } catch (error) {
-            console.error('Error logging out:', error);
-            Alert.alert('Error', 'Unable to log out. Please try again.');
-          }
-        },
-      },
-    ]);
+    router.replace('/welcome');
+    void signOut().catch((error) => {
+      console.error('Error signing out:', error);
+    });
   };
 
   return (
@@ -175,7 +143,7 @@ export default function TutorProfileDetailsScreen() {
             <TextInput
               style={styles.textInput}
               value={profile.fullName}
-              editable={isEditing}
+              editable={false}
               onChangeText={(text) => setProfile({ ...profile, fullName: text })}
               placeholder="e.g. Dr. Sarah Jenkins"
               placeholderTextColor="#94A3B8"
@@ -193,7 +161,7 @@ export default function TutorProfileDetailsScreen() {
             <TextInput
               style={styles.textInput}
               value={profile.email}
-              editable={isEditing}
+              editable={false}
               keyboardType="email-address"
               autoCapitalize="none"
               onChangeText={(text) => setProfile({ ...profile, email: text })}
@@ -229,7 +197,7 @@ export default function TutorProfileDetailsScreen() {
               <TextInput
                 style={styles.textInput}
                 value={profile.phoneNumber}
-                editable={isEditing}
+                editable={false}
                 keyboardType="phone-pad"
                 onChangeText={(text) => setProfile({ ...profile, phoneNumber: text })}
                 placeholder="(555) 000-0000"
@@ -254,7 +222,7 @@ export default function TutorProfileDetailsScreen() {
             <TextInput
               style={[styles.textInput, styles.multilineInput]}
               value={profile.degree}
-              editable={isEditing}
+              editable={false}
               multiline
               onChangeText={(text) => setProfile({ ...profile, degree: text })}
               placeholder="Degree, Major, Institution"
@@ -278,7 +246,7 @@ export default function TutorProfileDetailsScreen() {
             <TextInput
               style={styles.textInput}
               value={profile.locationTimezone}
-              editable={isEditing}
+              editable={false}
               onChangeText={(text) => setProfile({ ...profile, locationTimezone: text })}
               placeholder="City, State / Timezone"
               placeholderTextColor="#94A3B8"
@@ -315,11 +283,9 @@ export default function TutorProfileDetailsScreen() {
         <TouchableOpacity
           activeOpacity={0.85}
           style={styles.editProfileButton}
-          onPress={handleToggleEditSave}
+          onPress={() => router.push('/(tutor)/EditTutorProfile')}
         >
-          <Text style={styles.editProfileButtonText}>
-            {isEditing ? 'Save Changes' : 'Edit Profile'}
-          </Text>
+          <Text style={styles.editProfileButtonText}>Edit Profile</Text>
         </TouchableOpacity>
       </ScrollView>
 
