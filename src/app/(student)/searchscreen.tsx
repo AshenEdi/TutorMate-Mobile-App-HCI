@@ -368,10 +368,15 @@ export default function TutorSearchScreen() {
               </View>
 
               <View style={styles.footerRight}>
-                <View style={styles.pointsBadge}>
-                  <Ionicons name="star" size={12} color="#D97706" />
-                  <Text style={styles.pointsText}>{tutor.points}</Text>
-                </View>
+                <TouchableOpacity 
+                  onPress={() => router.push("/(student)/TutorReviews")}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.pointsBadge}>
+                    <Ionicons name="star" size={12} color="#D97706" />
+                    <Text style={styles.pointsText}>{tutor.points}</Text>
+                  </View>
+                </TouchableOpacity>
 
                 <TouchableOpacity 
                   style={styles.bookButton}
