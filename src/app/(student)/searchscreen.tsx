@@ -162,7 +162,10 @@ export default function TutorSearchScreen() {
           <Ionicons name="book" size={18} color="#FFFFFF" />
         </View>
 
-        <TouchableOpacity style={styles.profileButton}>
+        <TouchableOpacity
+          style={styles.profileButton}
+          onPress={() => router.push("/(student)/StudentProfile")}
+        >
           <Ionicons name="person" size={18} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
@@ -287,7 +290,10 @@ export default function TutorSearchScreen() {
 
               {/* Action Buttons: Flag & Bookmark */}
               <View style={styles.cardActions}>
-                <TouchableOpacity style={styles.flagButton}>
+                <TouchableOpacity
+                  style={styles.flagButton}
+                  onPress={() => router.push("/(student)/SubmitReport")}
+                >
                   <Ionicons name="flag-outline" size={14} color="#EF4444" />
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -368,12 +374,20 @@ export default function TutorSearchScreen() {
               </View>
 
               <View style={styles.footerRight}>
-                <View style={styles.pointsBadge}>
-                  <Ionicons name="star" size={12} color="#D97706" />
-                  <Text style={styles.pointsText}>{tutor.points}</Text>
-                </View>
+                <TouchableOpacity 
+                  onPress={() => router.push("/(student)/TutorReviews")}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.pointsBadge}>
+                    <Ionicons name="star" size={12} color="#D97706" />
+                    <Text style={styles.pointsText}>{tutor.points}</Text>
+                  </View>
+                </TouchableOpacity>
 
-                <TouchableOpacity style={styles.bookButton}>
+                <TouchableOpacity 
+                  style={styles.bookButton}
+                  onPress={() => router.push("/(student)/SessionBooking")}
+                >
                   <Text style={styles.bookButtonText}>Book Session</Text>
                   <Ionicons
                     name="arrow-forward"
@@ -397,7 +411,17 @@ export default function TutorSearchScreen() {
           { name: "Messages", icon: "chatbox-outline", active: false },
           { name: "Profile", icon: "person-outline", active: false },
         ].map((tab) => (
-          <TouchableOpacity key={tab.name} style={styles.tabItem}>
+          <TouchableOpacity
+            key={tab.name}
+            style={styles.tabItem}
+            onPress={() => {
+              if (tab.name === "Home") router.push("/(student)/dashboard");
+              else if (tab.name === "Search") router.push("/(student)/searchscreen");
+              else if (tab.name === "Sessions") router.push("/(student)/MySessions");
+              else if (tab.name === "Messages") router.push("/(student)/MessagesInbox");
+              else if (tab.name === "Profile") router.push("/(student)/StudentProfile");
+            }}
+          >
             <Ionicons
               name={tab.icon as any}
               size={22}

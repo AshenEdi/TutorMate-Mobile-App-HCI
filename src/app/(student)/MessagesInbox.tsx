@@ -261,7 +261,7 @@ export default function MessagesInboxScreen() {
           <Ionicons name="home-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Home</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/search")}>
+        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/searchscreen")}>
           <Ionicons name="search-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Search</Text>
         </TouchableOpacity>

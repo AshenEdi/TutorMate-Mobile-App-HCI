@@ -2,15 +2,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  Image,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Image,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 export default function SearchFilterScreen() {
@@ -44,7 +44,10 @@ export default function SearchFilterScreen() {
           <Text style={styles.brandTitleText}>Search</Text>
         </View>
 
-        <TouchableOpacity style={styles.profileButton}>
+        <TouchableOpacity
+          style={styles.profileButton}
+          onPress={() => router.push("/(student)/StudentProfile")}
+        >
           <Ionicons name="person" size={18} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
@@ -375,7 +378,17 @@ export default function SearchFilterScreen() {
           { name: "Messages", icon: "chatbox-outline", active: false },
           { name: "Profile", icon: "person-outline", active: false },
         ].map((tab) => (
-          <TouchableOpacity key={tab.name} style={styles.tabItem}>
+          <TouchableOpacity
+            key={tab.name}
+            style={styles.tabItem}
+            onPress={() => {
+              if (tab.name === "Home") router.push("/(student)/dashboard");
+              else if (tab.name === "Search") router.push("/(student)/searchscreen");
+              else if (tab.name === "Sessions") router.push("/(student)/MySessions");
+              else if (tab.name === "Messages") router.push("/(student)/MessagesInbox");
+              else if (tab.name === "Profile") router.push("/(student)/StudentProfile");
+            }}
+          >
             <Ionicons
               name={tab.icon as any}
               size={22}
