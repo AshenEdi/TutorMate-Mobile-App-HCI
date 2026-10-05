@@ -19,6 +19,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { TutorBottomNav } from '../../components/TutorBottomNav';
 import { useAuth } from '../../context/AuthContext';
 type BottomTab = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
 
@@ -391,6 +392,7 @@ export default function TutorProfileDetailsScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+      <TutorBottomNav activeTab="profile" />
     </SafeAreaView>
   );
 }
@@ -668,6 +670,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   bottomNav: {
+    display: 'none',
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',

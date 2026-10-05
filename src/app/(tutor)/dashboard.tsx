@@ -14,6 +14,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { TutorBottomNav } from '../../components/TutorBottomNav';
 // Supabase Integration note:
 // import { createClient } from '@supabase/supabase-js';
 // const supabase = createClient('SUPABASE_URL', 'SUPABASE_ANON_KEY');
@@ -273,7 +274,16 @@ export default function TutorBookingScreen() {
 
                   <View style={styles.nameMeta}>
                     <View style={styles.nameRow}>
-                      <Text style={styles.nameText}>{item.studentName}</Text>
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={() =>
+                          router.push(
+                            `/(tutor)/TutorBookingRequestDetails?status=${item.status.toLowerCase()}`
+                          )
+                        }
+                      >
+                        <Text style={styles.nameText}>{item.studentName}</Text>
+                      </TouchableOpacity>
                       {item.badgeType === 'verified' && (
                         <Ionicons name="checkmark-circle" size={17} color="#2563EB" />
                       )}
@@ -498,6 +508,7 @@ export default function TutorBookingScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+      <TutorBottomNav activeTab="requests" />
     </SafeAreaView>
   );
 }
@@ -870,6 +881,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   bottomNav: {
+    display: 'none',
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',

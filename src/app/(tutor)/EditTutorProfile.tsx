@@ -15,6 +15,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { TutorBottomNav } from '../../components/TutorBottomNav';
 
 interface EditProfileFormData {
   fullName: string;
@@ -398,6 +399,7 @@ export default function EditProfileScreen() {
           <Text style={styles.previewButtonText}>Preview Public Profile</Text>
         </TouchableOpacity>
       </ScrollView>
+      <TutorBottomNav activeTab="profile" />
     </SafeAreaView>
   );
 }
