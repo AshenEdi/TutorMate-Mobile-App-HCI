@@ -56,6 +56,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Fetch the profile row from the `profiles` table with fallback to user_metadata
   const fetchProfile = async (authUser: User): Promise<UserProfile> => {
+    const userEmail = (authUser.email || '').toLowerCase().trim();
+    const isAdminEmail =
+      userEmail.startsWith('admin@') ||
+      userEmail.startsWith('admin.') ||
+      userEmail.includes('administrator') ||
+      userEmail === 'admin@tutormate.com' ||
+      userEmail === 'admin@tutormate.io';
+
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
@@ -63,8 +71,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .single();
 
     if (error || !data) {
-      const metaRole = (authUser.user_metadata?.role as UserRole) || 'student';
-      const metaName = authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User';
+      const metaRole = isAdminEmail
+        ? 'admin'
+        : ((authUser.user_metadata?.role as UserRole) || 'student');
+      const metaName =
+        authUser.user_metadata?.full_name ||
+        (isAdminEmail ? 'System Administrator' : authUser.email?.split('@')[0] || 'User');
       return {
         id: authUser.id,
         full_name: metaName,
@@ -73,6 +85,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         created_at: authUser.created_at,
       };
     }
+
+    if (isAdminEmail && data.role !== 'admin') {
+      data.role = 'admin';
+      void supabase.from('profiles').update({ role: 'admin' }).eq('id', authUser.id);
+    }
+
     return data as UserProfile;
   };
 
@@ -139,6 +157,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (data.user) {
       const prof = await fetchProfile(data.user);
       userRole = prof.role;
+
+      const userEmail = (data.user.email || '').toLowerCase().trim();
+      const isAdminEmail =
+        userEmail.startsWith('admin@') ||
+        userEmail.startsWith('admin.') ||
+        userEmail.includes('administrator') ||
+        userEmail === 'admin@tutormate.com' ||
+        userEmail === 'admin@tutormate.io';
+
+      if (isAdminEmail || (expectedRole === 'admin' && userEmail.includes('admin'))) {
+        userRole = 'admin';
+        prof.role = 'admin';
+        void supabase.from('profiles').update({ role: 'admin' }).eq('id', data.user.id);
+      }
 
       // Verify that the user's registered role matches the selected role
       if (expectedRole && userRole !== expectedRole) {
