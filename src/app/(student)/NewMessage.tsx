@@ -2,17 +2,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  Alert,
-  Image,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    Image,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 // --- MOCK DATA ---
@@ -223,7 +223,7 @@ export default function NewMessageScreen() {
           <Ionicons name="home-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Home</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/search")}>
+        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/searchscreen")}>
           <Ionicons name="search-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Search</Text>
         </TouchableOpacity>
