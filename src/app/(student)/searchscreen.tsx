@@ -287,7 +287,10 @@ export default function TutorSearchScreen() {
 
               {/* Action Buttons: Flag & Bookmark */}
               <View style={styles.cardActions}>
-                <TouchableOpacity style={styles.flagButton}>
+                <TouchableOpacity
+                  style={styles.flagButton}
+                  onPress={() => router.push("/(student)/SubmitReport")}
+                >
                   <Ionicons name="flag-outline" size={14} color="#EF4444" />
                 </TouchableOpacity>
                 <TouchableOpacity
