@@ -20,7 +20,7 @@ interface AuthContextValue {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: string | null; role?: UserRole }>;
+  signIn: (email: string, password: string, expectedRole?: UserRole) => Promise<{ error: string | null; role?: UserRole }>;
   signUp: (params: SignUpParams) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
@@ -122,7 +122,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // ── signIn ──────────────────────────────────────────────────────────────────
-  const signIn = async (email: string, password: string): Promise<{ error: string | null; role?: UserRole }> => {
+  const signIn = async (
+    email: string,
+    password: string,
+    expectedRole?: UserRole
+  ): Promise<{ error: string | null; role?: UserRole }> => {
     setLoading(true);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
@@ -134,10 +138,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let userRole: UserRole = 'student';
     if (data.user) {
       const prof = await fetchProfile(data.user);
+      userRole = prof.role;
+
+      // Verify that the user's registered role matches the selected role
+      if (expectedRole && userRole !== expectedRole) {
+        // Mismatch! Sign out immediately to wipe the authenticated session
+        await supabase.auth.signOut();
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setLoading(false);
+
+        const roleLabels: Record<UserRole, string> = {
+          student: 'Student',
+          tutor: 'Tutor',
+          admin: 'Admin',
+        };
+        const actualRoleName = roleLabels[userRole] || userRole;
+
+        return {
+          error: `This account is registered as a ${actualRoleName}. Please select the "${actualRoleName}" tab above to log in.`,
+        };
+      }
+
       setProfile(prof);
       setUser(data.user);
       setSession(data.session);
-      userRole = prof.role;
     }
 
     setLoading(false);

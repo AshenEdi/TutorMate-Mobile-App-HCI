@@ -18,13 +18,41 @@ function AppNavigator() {
     if (loading) return;
 
     const currentSegment = (segments[0] as string) || '';
-    const inAuthGroup = currentSegment === '(student)' || currentSegment === '(tutor)' || currentSegment === '(admin)' || currentSegment === 'dashboard';
+    const inAuthGroup =
+      currentSegment === '(student)' ||
+      currentSegment === '(tutor)' ||
+      currentSegment === '(admin)' ||
+      currentSegment === 'dashboard';
+    const isAuthScreen =
+      currentSegment === 'login' ||
+      currentSegment === 'student_register' ||
+      currentSegment === 'tutor_register';
 
-    if (session) {
-      if (!inAuthGroup) {
-        if (profile?.role === 'admin') {
+    if (session && profile) {
+      // Prevent cross-role access to protected route groups
+      if (currentSegment === '(student)' && profile.role !== 'student') {
+        if (profile.role === 'tutor') {
+          router.replace('/(tutor)/dashboard');
+        } else if (profile.role === 'admin') {
           router.replace('/(admin)/dashboard');
-        } else if (profile?.role === 'tutor') {
+        }
+      } else if (currentSegment === '(tutor)' && profile.role !== 'tutor') {
+        if (profile.role === 'student') {
+          router.replace('/(student)/dashboard');
+        } else if (profile.role === 'admin') {
+          router.replace('/(admin)/dashboard');
+        }
+      } else if (currentSegment === '(admin)' && profile.role !== 'admin') {
+        if (profile.role === 'tutor') {
+          router.replace('/(tutor)/dashboard');
+        } else {
+          router.replace('/(student)/dashboard');
+        }
+      } else if (!inAuthGroup && !isAuthScreen) {
+        // Cold start or welcome screen redirect to correct role dashboard
+        if (profile.role === 'admin') {
+          router.replace('/(admin)/dashboard');
+        } else if (profile.role === 'tutor') {
           router.replace('/(tutor)/dashboard');
         } else {
           router.replace('/(student)/dashboard');
@@ -35,7 +63,7 @@ function AppNavigator() {
         router.replace('/welcome');
       }
     }
-  }, [session, profile, loading]);
+  }, [session, profile, loading, segments]);
 
   return (
     <>
