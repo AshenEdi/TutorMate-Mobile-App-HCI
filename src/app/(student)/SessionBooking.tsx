@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-    Alert,
     Image,
     Platform,
     SafeAreaView,
@@ -56,9 +55,7 @@ export default function SessionBookingScreen() {
   const [delivery, setDelivery] = useState("whiteboard");
 
   const handleConfirm = () => {
-    Alert.alert("Booking Confirmed", "Your session has been booked successfully!", [
-      { text: "OK", onPress: () => router.push("/(student)/MySessions") }
-    ]);
+    router.push("/(student)/BookingConfirmed");
   };
 
   return (
