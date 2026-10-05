@@ -373,7 +373,10 @@ export default function TutorSearchScreen() {
                   <Text style={styles.pointsText}>{tutor.points}</Text>
                 </View>
 
-                <TouchableOpacity style={styles.bookButton}>
+                <TouchableOpacity 
+                  style={styles.bookButton}
+                  onPress={() => router.push("/(student)/SessionBooking")}
+                >
                   <Text style={styles.bookButtonText}>Book Session</Text>
                   <Ionicons
                     name="arrow-forward"
