@@ -14,7 +14,11 @@ export function TutorBottomNav({ activeTab }: TutorBottomNavProps) {
   const handleTabPress = (tab: TutorBottomTab) => {
     if (tab === 'profile') {
       router.replace('/(tutor)/TutorProfile');
-    } else if (tab === 'sessions' || tab === 'requests') {
+    } else if (tab === 'sessions') {
+      router.replace('/(tutor)/TutorUpcomingSessions');
+    } else if (tab === 'calendar') {
+      router.replace('/(tutor)/TutorCalendar');
+    } else if (tab === 'requests') {
       router.replace('/(tutor)/dashboard');
     }
   };
