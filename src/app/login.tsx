@@ -3,7 +3,8 @@ import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator } from 'react-native';
 import {
-  useAuth
+  useAuth,
+  UserRole,
 } from '../context/AuthContext';
 import {
   Alert,
@@ -28,26 +29,36 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const handleRoleChange = (role: RoleType) => {
+    setSelectedRole(role);
+    if (errorMessage) setErrorMessage(null);
+  };
 
   const handleLogin = async () => {
+    setErrorMessage(null);
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !password) {
-      Alert.alert('Login', 'Please enter your email and password.');
+      setErrorMessage('Please enter both your email or username and password.');
       return;
     }
 
-    const { error, role: userRole } = await signIn(trimmedEmail, password);
+    const targetRole = selectedRole.toLowerCase() as UserRole;
+    const { error, role: userRole } = await signIn(trimmedEmail, password, targetRole);
 
     if (error) {
-      Alert.alert('Login Failed', error);
+      if (error.toLowerCase().includes('invalid login credentials') || error.toLowerCase().includes('invalid grant')) {
+        setErrorMessage('Invalid email or password. Please verify your credentials and try again.');
+      } else {
+        setErrorMessage(error);
+      }
       return;
     }
 
-    const effectiveRole = userRole || selectedRole.toLowerCase();
-
-    if (effectiveRole === 'admin') {
+    if (userRole === 'admin') {
       router.replace('/(admin)/dashboard');
-    } else if (effectiveRole === 'tutor') {
+    } else if (userRole === 'tutor') {
       router.replace('/(tutor)/dashboard');
     } else {
       router.replace('/(student)/dashboard');
@@ -113,7 +124,7 @@ export default function LoginScreen() {
                 styles.roleTab,
                 selectedRole === 'Student' ? styles.roleTabActive : styles.roleTabInactive,
               ]}
-              onPress={() => setSelectedRole('Student')}>
+              onPress={() => handleRoleChange('Student')}>
               <Ionicons
                 name={selectedRole === 'Student' ? 'person' : 'person-outline'}
                 size={16}
@@ -134,7 +145,7 @@ export default function LoginScreen() {
                 styles.roleTab,
                 selectedRole === 'Tutor' ? styles.roleTabActive : styles.roleTabInactive,
               ]}
-              onPress={() => setSelectedRole('Tutor')}>
+              onPress={() => handleRoleChange('Tutor')}>
               <Ionicons
                 name={selectedRole === 'Tutor' ? 'people' : 'people-outline'}
                 size={16}
@@ -155,7 +166,7 @@ export default function LoginScreen() {
                 styles.roleTab,
                 selectedRole === 'Admin' ? styles.roleTabActive : styles.roleTabInactive,
               ]}
-              onPress={() => setSelectedRole('Admin')}>
+              onPress={() => handleRoleChange('Admin')}>
               <Ionicons
                 name={selectedRole === 'Admin' ? 'shield-checkmark' : 'shield-outline'}
                 size={16}
@@ -173,17 +184,48 @@ export default function LoginScreen() {
 
           {/* Form Fields */}
           <View style={styles.formContainer}>
+            {/* UI Error Message Banner */}
+            {errorMessage ? (
+              <View style={styles.errorBanner}>
+                <Ionicons name="alert-circle" size={20} color="#DC2626" style={styles.errorIcon} />
+                <View style={styles.errorContent}>
+                  <Text style={styles.errorTitle}>Invalid Credentials</Text>
+                  <Text style={styles.errorText}>{errorMessage}</Text>
+                </View>
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => setErrorMessage(null)}
+                  style={styles.errorCloseButton}>
+                  <Ionicons name="close" size={18} color="#991B1B" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
             {/* Email Field */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Email or Username</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="person-outline" size={18} color="#94A3B8" style={styles.inputIcon} />
+              <View style={[styles.inputWrapper, !!errorMessage && styles.inputWrapperError]}>
+                <Ionicons
+                  name="person-outline"
+                  size={18}
+                  color={errorMessage ? '#DC2626' : '#94A3B8'}
+                  style={styles.inputIcon}
+                />
                 <TextInput
                   style={styles.textInput}
-                  placeholder="student@email.com"
+                  placeholder={
+                    selectedRole === 'Tutor'
+                      ? 'tutor@email.com'
+                      : selectedRole === 'Admin'
+                      ? 'admin@email.com'
+                      : 'student@email.com'
+                  }
                   placeholderTextColor="#94A3B8"
                   value={email}
-                  onChangeText={setEmail}
+                  onChangeText={(text) => {
+                    setEmail(text);
+                    if (errorMessage) setErrorMessage(null);
+                  }}
                   autoCapitalize="none"
                   keyboardType="email-address"
                 />
@@ -198,14 +240,22 @@ export default function LoginScreen() {
                   <Text style={styles.forgotText}>Forgot password?</Text>
                 </TouchableOpacity>
               </View>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="lock-closed-outline" size={18} color="#94A3B8" style={styles.inputIcon} />
+              <View style={[styles.inputWrapper, !!errorMessage && styles.inputWrapperError]}>
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={18}
+                  color={errorMessage ? '#DC2626' : '#94A3B8'}
+                  style={styles.inputIcon}
+                />
                 <TextInput
                   style={styles.textInput}
                   placeholder="Enter your password"
                   placeholderTextColor="#94A3B8"
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={(text) => {
+                    setPassword(text);
+                    if (errorMessage) setErrorMessage(null);
+                  }}
                   secureTextEntry={!showPassword}
                 />
                 <TouchableOpacity
@@ -418,6 +468,38 @@ const styles = StyleSheet.create({
   formContainer: {
     gap: 14,
   },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  errorIcon: {
+    marginTop: 1,
+  },
+  errorContent: {
+    flex: 1,
+  },
+  errorTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+    marginBottom: 2,
+  },
+  errorText: {
+    fontSize: 12.5,
+    color: '#B91C1C',
+    lineHeight: 17,
+  },
+  errorCloseButton: {
+    padding: 2,
+    marginTop: 1,
+  },
   inputGroup: {
     gap: 6,
   },
@@ -445,6 +527,10 @@ const styles = StyleSheet.create({
     height: 48,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+  },
+  inputWrapperError: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FFF5F5',
   },
   inputIcon: {
     marginRight: 8,

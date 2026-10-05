@@ -1,6 +1,7 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
+import { useAuth } from "../../context/AuthContext";
 import {
     Image,
     Platform,
@@ -81,6 +82,7 @@ const TARGET_UNIVERSITIES = [
 
 export default function UserProfileScreen() {
   const router = useRouter();
+  const { signOut } = useAuth();
   const [activeTab, setActiveTab] = useState("Profile");
 
   return (
@@ -368,7 +370,10 @@ export default function UserProfileScreen() {
         {/* --- LOG OUT BUTTON --- */}
         <TouchableOpacity
           style={styles.logoutBtn}
-          onPress={() => router.replace("/welcome")}
+          onPress={async () => {
+            await signOut();
+            router.replace("/welcome");
+          }}
         >
           <Ionicons
             name="log-out-outline"

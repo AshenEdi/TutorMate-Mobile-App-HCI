@@ -255,7 +255,7 @@ export default function ChatConversationScreen() {
             </TouchableOpacity>
           </ScrollView>
           <TouchableOpacity style={styles.keyboardBtn}>
-            <Ionicons name="keyboard-outline" size={20} color="#64748B" />
+            <Ionicons name="keypad-outline" size={20} color="#64748B" />
           </TouchableOpacity>
         </View>
 
