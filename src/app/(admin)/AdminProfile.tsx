@@ -25,11 +25,32 @@ export default function AdminProfileScreen() {
   const { profile, signOut } = useAuth();
 
   const [is2FAEnabled, setIs2FAEnabled] = useState(true);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   const adminName = profile?.full_name || "Jordan Hayes";
   const adminEmail = profile?.email || "jordan.hayes@tutormate.internal";
 
-  const handleLogout = async () => {
+  const completeLogout = async () => {
+    setLogoutError(null);
+    setIsLoggingOut(true);
+    try {
+      await signOut();
+      router.replace("/welcome");
+    } catch (error) {
+      console.error("Error signing out:", error);
+      setLogoutError("Unable to log out. Please try again.");
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
+  const handleLogout = () => {
+    if (Platform.OS === "web") {
+      void completeLogout();
+      return;
+    }
+
     Alert.alert(
       "Log Out of Admin Console",
       "Are you sure you want to end your administrative session?",
@@ -38,10 +59,7 @@ export default function AdminProfileScreen() {
         {
           text: "Log Out",
           style: "destructive",
-          onPress: async () => {
-            await signOut();
-            router.replace("/welcome");
-          },
+          onPress: () => void completeLogout(),
         },
       ]
     );
@@ -235,10 +253,19 @@ export default function AdminProfileScreen() {
             style={styles.logoutButton}
             activeOpacity={0.85}
             onPress={handleLogout}
+            disabled={isLoggingOut}
           >
             <Ionicons name="log-out-outline" size={18} color="#991B1B" />
-            <Text style={styles.logoutButtonText}>Log Out of Admin Console</Text>
+            <Text style={styles.logoutButtonText}>
+              {isLoggingOut ? "Logging Out..." : "Log Out of Admin Console"}
+            </Text>
           </TouchableOpacity>
+
+          {logoutError ? (
+            <Text accessibilityRole="alert" style={styles.logoutErrorText}>
+              {logoutError}
+            </Text>
+          ) : null}
 
           <Text style={styles.signedInAsText}>
             Signed in as {adminEmail}
@@ -586,6 +613,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
     color: "#991B1B",
+  },
+  logoutErrorText: {
+    fontSize: 12,
+    color: "#B91C1C",
+    textAlign: "center",
   },
   signedInAsText: {
     fontSize: 11.5,
