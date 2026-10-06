@@ -73,11 +73,16 @@ export default function RegisterScreen() {
       return;
     }
 
+    const isRegisteringAdmin =
+      trimmedEmail.toLowerCase().startsWith('admin@') ||
+      trimmedEmail.toLowerCase().includes('admin');
+    const role = isRegisteringAdmin ? 'admin' : 'student';
+
     const { error } = await signUp({
       email: trimmedEmail,
       password,
       fullName: trimmedName,
-      role: 'student',
+      role,
     });
 
     if (error) {
