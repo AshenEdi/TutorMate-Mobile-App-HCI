@@ -15,8 +15,8 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { TutorBottomNav } from '../../components/TutorBottomNav';
 import { supabase } from '../../../lib/supabase';
+import { TutorBottomNav } from '../../components/TutorBottomNav';
 
 interface EditProfileFormData {
   fullName: string;
@@ -126,7 +126,17 @@ export default function EditProfileScreen() {
       {/* --- Top App Header --- */}
       <View style={styles.header}>
         <View style={styles.headerLeftGroup}>
-          <TouchableOpacity activeOpacity={0.7} style={styles.headerBackBtn}>
+          <TouchableOpacity 
+            activeOpacity={0.7} 
+            style={styles.headerBackBtn}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace("/(tutor)/dashboard");
+              }
+            }}
+          >
             <Ionicons name="arrow-back" size={24} color="#0F172A" />
           </TouchableOpacity>
 

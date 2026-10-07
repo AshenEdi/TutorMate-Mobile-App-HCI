@@ -171,13 +171,14 @@ export default function TutorBookingScreen() {
 
       {/* --- Top Navigation Header --- */}
       <View style={styles.topHeader}>
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerNavBtn}>
-          <Ionicons name="arrow-back" size={24} color="#0F172A" />
-        </TouchableOpacity>
-
-        <View style={styles.headerCenterLogo}>
-          <Ionicons name="book" size={20} color="#FFFFFF" />
+        <View style={styles.brandContainer}>
+          <View style={styles.brandIcon}>
+            <Ionicons name="book" size={18} color="#FFFFFF" />
+          </View>
+          <Text style={styles.brandTitle}>TutorMate</Text>
         </View>
+
+        
 
         <TouchableOpacity
           activeOpacity={0.7}
@@ -532,6 +533,24 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'flex-start',
+  },
+  brandContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  brandIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "#2563EB",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  brandTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0F172A",
   },
   headerCenterLogo: {
     width: 40,

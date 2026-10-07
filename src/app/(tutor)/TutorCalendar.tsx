@@ -4,6 +4,7 @@ import {
     MaterialCommunityIcons,
 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
     Alert,
@@ -17,10 +18,9 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { supabase } from '../../../lib/supabase';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../../lib/supabase';
-import { useRouter } from 'expo-router';
 
 type BottomTab = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
 
@@ -379,7 +379,17 @@ export default function ManageScheduleScreen() {
 
       {/* --- Top App Header --- */}
       <View style={styles.header}>
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerBackBtn}>
+        <TouchableOpacity 
+          activeOpacity={0.7} 
+          style={styles.headerBackBtn}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace("/(tutor)/dashboard");
+            }
+          }}
+        >
           <Ionicons name="arrow-back" size={24} color="#0F172A" />
         </TouchableOpacity>
 
@@ -387,7 +397,11 @@ export default function ManageScheduleScreen() {
           <Ionicons name="book" size={19} color="#FFFFFF" />
         </View>
 
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerProfileBtn}>
+        <TouchableOpacity 
+          activeOpacity={0.7} 
+          style={styles.headerProfileBtn}
+          onPress={() => router.push("/(tutor)/TutorProfile")}
+        >
           <Ionicons name="person" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>

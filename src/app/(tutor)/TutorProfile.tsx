@@ -19,9 +19,9 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { supabase } from '../../../lib/supabase';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../../lib/supabase';
 type BottomTab = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
 
 interface TutorProfile {
@@ -109,7 +109,17 @@ export default function TutorProfileDetailsScreen() {
       {/* --- Top App Header --- */}
       <View style={styles.header}>
         <View style={styles.headerLeftGroup}>
-          <TouchableOpacity activeOpacity={0.7} style={styles.headerBackBtn}>
+          <TouchableOpacity 
+            activeOpacity={0.7} 
+            style={styles.headerBackBtn}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace("/(tutor)/dashboard");
+              }
+            }}
+          >
             <Ionicons name="arrow-back" size={24} color="#0F172A" />
           </TouchableOpacity>
 
