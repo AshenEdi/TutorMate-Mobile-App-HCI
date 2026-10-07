@@ -4,6 +4,8 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import {
+    ActivityIndicator,
+    Alert,
     Image,
     Platform,
     SafeAreaView,
@@ -29,6 +31,7 @@ interface Tutor {
   name: string;
   title: string;
   rating: number;
+  averageRating: string;
   reviews: number;
   avatar: string;
   isVerified?: boolean;
@@ -82,7 +85,8 @@ export default function TutorSearchScreen() {
   const [activeCategory, setActiveCategory] = useState("1");
   const [searchQuery, setSearchQuery] = useState("");
   const [bookmarks, setBookmarks] = useState<Record<string, boolean>>({});
-  const [tutorsList, setTutorsList] = useState<Tutor[]>([]);
+  const [tutors, setTutors] = useState<Tutor[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let isMounted = true;
@@ -102,10 +106,26 @@ export default function TutorSearchScreen() {
         // 2. Fetch current logged-in auth user
         const { data: { user: currentUser } } = await supabase.auth.getUser();
 
-        // 3. Fetch ALL tutor profiles explicitly requesting full_name
-        const { data: dbProfilesRaw } = await supabase
+        // 3. Fetch tutor profiles
+        const { data: dbProfilesRaw, error: profilesError } = await supabase
           .from('profiles')
-          .select('id, full_name, name, email, role, specialty, subjects, title, bio, education, degree, degree_credentials, hourly_rate, avatar_url, rating, reviews, points');
+          .select('*')
+          .eq('role', 'tutor');
+        if (profilesError) throw profilesError;
+
+        const { data: allReviews, error: reviewsError } = await supabase
+          .from("reviews")
+          .select("tutor_id, rating");
+        if (reviewsError) throw reviewsError;
+
+        const reviewStats: Record<string, { count: number; totalRating: number }> = {};
+        (allReviews || []).forEach((review) => {
+          if (!reviewStats[review.tutor_id]) {
+            reviewStats[review.tutor_id] = { count: 0, totalRating: 0 };
+          }
+          reviewStats[review.tutor_id].count += 1;
+          reviewStats[review.tutor_id].totalRating += Number(review.rating) || 0;
+        });
 
         // 4. Calculate local dates (today & tomorrow YMD)
         const now = new Date();
@@ -246,17 +266,12 @@ export default function TutorSearchScreen() {
         });
 
         // 8. Collect all tutor IDs to display:
-        //    • Profiles with role='tutor'
-        //    • Any tutor_id that appears in availability (may not have profile row yet)
+        //    • Tutor profiles returned from Supabase
+        //    • Tutor IDs that appear in availability but have no profile yet
         const tutorIdSet = new Set<string>();
         (dbProfilesRaw || []).forEach((p: any) => {
-          if (p.role && p.role.toLowerCase() === 'tutor') tutorIdSet.add(p.id);
+          tutorIdSet.add(p.id);
         });
-        Object.keys(mapByTutor).forEach((tid) => tutorIdSet.add(tid));
-        // Fallback: no tutors found → show all profiles
-        if (tutorIdSet.size === 0 && (dbProfilesRaw || []).length > 0) {
-          (dbProfilesRaw || []).forEach((p: any) => tutorIdSet.add(p.id));
-        }
         const tutorIds = Array.from(tutorIdSet);
 
         const mergedList: Tutor[] = tutorIds.map((tid, idx) => {
@@ -305,7 +320,7 @@ export default function TutorSearchScreen() {
           // Rate
           let tutorRate = Number(p.hourly_rate) || 0;
           if (!tutorRate && isCurrentUser) tutorRate = Number(savedEditProfile?.hourlyRate) || 0;
-          if (!tutorRate) tutorRate = 45 + idx * 5;
+          if (!tutorRate) tutorRate = 45;
 
           // Avatar
           const tutorAvatar =
@@ -318,13 +333,19 @@ export default function TutorSearchScreen() {
           const hasMorning = tutorRows.some((r) => r.morning_window);
           const hasAfternoon = tutorRows.some((r) => r.afternoon_window);
           const hasEvening = tutorRows.some((r) => r.evening_window);
+          const tutorReviewStats = reviewStats[tid];
+          const reviewCount = tutorReviewStats?.count || 0;
+          const rating = reviewCount
+            ? tutorReviewStats.totalRating / reviewCount
+            : 0;
 
           return {
             id: tid,
             name: tutorName,
             title: tutorTitle,
-            rating: Number(p.rating) || 4.9,
-            reviews: Number(p.reviews) || 128,
+            rating,
+            averageRating: reviewCount ? rating.toFixed(1) : "New",
+            reviews: reviewCount,
             avatar: tutorAvatar,
             isVerified: true,
             statusBadge,
@@ -335,7 +356,7 @@ export default function TutorSearchScreen() {
               textColor: '#3730A3',
             },
             hourlyRate: tutorRate,
-            points: Number(p.points) || 128,
+            points: Math.trunc(tutorReviewStats?.totalRating || 0),
             availabilityWindows: {
               morning: hasMorning,
               afternoon: hasAfternoon,
@@ -345,10 +366,13 @@ export default function TutorSearchScreen() {
         });
 
         if (isMounted) {
-          setTutorsList(mergedList);
+          setTutors(mergedList);
         }
-      } catch (err) {
-        console.warn("Failed to fetch tutors and availability for search screen:", err);
+      } catch (error) {
+        console.error("Failed to fetch tutors and availability for search screen:", error);
+        Alert.alert("Error", "Unable to load tutors.");
+      } finally {
+        if (isMounted) setLoading(false);
       }
     }
 
@@ -363,7 +387,7 @@ export default function TutorSearchScreen() {
     setBookmarks((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const filteredTutors = tutorsList.filter((tutor) => {
+  const filteredTutors = tutors.filter((tutor) => {
     const matchesSearch =
       searchQuery.trim() === "" ||
       tutor.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -518,6 +542,8 @@ export default function TutorSearchScreen() {
           })}
         </ScrollView>
 
+        {loading && <ActivityIndicator size="large" color="#2563EB" />}
+
         {/* --- RESULTS SUBHEADER --- */}
         <View style={styles.resultsHeader}>
           <Text style={styles.resultsText}>
@@ -551,7 +577,7 @@ export default function TutorSearchScreen() {
                   <View style={styles.ratingRow}>
                     <Ionicons name="star" size={14} color="#D97706" />
                     <Text style={styles.ratingValue}>
-                      {tutor.rating.toFixed(1)}
+                      {tutor.averageRating}
                     </Text>
                     <Text style={styles.ratingDot}>•</Text>
                     <Text style={styles.reviewsText}>
@@ -564,7 +590,12 @@ export default function TutorSearchScreen() {
                 <View style={styles.cardActions}>
                   <TouchableOpacity
                     style={styles.flagButton}
-                    onPress={() => router.push("/(student)/SubmitReport")}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/(student)/SubmitReport",
+                        params: { tutorId: tutor.id, tutorName: tutor.name },
+                      })
+                    }
                   >
                     <Ionicons name="flag-outline" size={14} color="#EF4444" />
                   </TouchableOpacity>
@@ -647,7 +678,12 @@ export default function TutorSearchScreen() {
 
               <View style={styles.footerRight}>
                 <TouchableOpacity 
-                  onPress={() => router.push("/(student)/TutorReviews")}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/(student)/TutorReviews",
+                      params: { tutorId: tutor.id },
+                    })
+                  }
                   activeOpacity={0.7}
                 >
                   <View style={styles.pointsBadge}>
@@ -658,7 +694,7 @@ export default function TutorSearchScreen() {
 
                 <TouchableOpacity 
                   style={styles.bookButton}
-                  onPress={() => router.push({ pathname: "/(student)/SessionBooking", params: { tutorId: tutor.id } })}
+                  onPress={() => router.push(`/(student)/SessionBooking?tutorId=${tutor.id}`)}
                 >
                   <Text style={styles.bookButtonText}>Book Session</Text>
                   <Ionicons
@@ -673,7 +709,7 @@ export default function TutorSearchScreen() {
           </View>
         );
       })}
-        {filteredTutors.length === 0 && (
+        {!loading && filteredTutors.length === 0 && (
           <View style={styles.emptyContainer}>
             <Ionicons name="school-outline" size={48} color="#94A3B8" style={{ marginBottom: 10 }} />
             <Text style={styles.emptyTitle}>No Tutors Available</Text>

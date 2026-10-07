@@ -104,6 +104,14 @@ const FILTER_TABS = [
   { id: "reminders", label: "Reminders (3)" },
 ];
 
+const STUDENT_NAV_TABS = [
+  { name: "Home", icon: "school-outline" },
+  { name: "Search", icon: "search-outline" },
+  { name: "Sessions", icon: "calendar-outline" },
+  { name: "Messages", icon: "chatbox-outline" },
+  { name: "Profile", icon: "person-outline" },
+] as const;
+
 export default function NotificationsScreen() {
   const router = useRouter();
   const [selectedTab, setSelectedTab] = useState("all");
@@ -382,36 +390,32 @@ export default function NotificationsScreen() {
 
       {/* --- BOTTOM TAB BAR --- */}
       <View style={styles.tabBar}>
-        {[
-          { name: "Sessions", icon: "school", active: true },
-          { name: "Calendar", icon: "calendar-outline", active: false },
-          {
-            name: "Requests",
-            icon: "document-text-outline",
-            badge: 2,
-            active: false,
-          },
-          { name: "Messages", icon: "chatbox-outline", active: false },
-          { name: "Profile", icon: "person-outline", active: false },
-        ].map((tab) => (
-          <TouchableOpacity key={tab.name} style={styles.tabItem}>
+        {STUDENT_NAV_TABS.map((tab) => (
+          <TouchableOpacity
+            key={tab.name}
+            style={styles.tabItem}
+            onPress={() => {
+              if (tab.name === "Home") {
+                router.push("/(student)/dashboard");
+              } else if (tab.name === "Search") {
+                router.push("/(student)/searchscreen");
+              } else if (tab.name === "Sessions") {
+                router.push("/(student)/MySessions");
+              } else if (tab.name === "Messages") {
+                router.push("/(student)/MessagesInbox");
+              } else {
+                router.push("/(student)/StudentProfile");
+              }
+            }}
+          >
             <View style={styles.tabIconWrapper}>
               <Ionicons
-                name={tab.icon as any}
+                name={tab.icon}
                 size={22}
-                color={tab.active ? "#2563EB" : "#9CA3AF"}
+                color="#9CA3AF"
               />
-              {tab.badge && (
-                <View style={styles.tabBadge}>
-                  <Text style={styles.tabBadgeText}>{tab.badge}</Text>
-                </View>
-              )}
             </View>
-            <Text
-              style={[styles.tabLabel, tab.active && styles.tabLabelActive]}
-            >
-              {tab.name}
-            </Text>
+            <Text style={styles.tabLabel}>{tab.name}</Text>
           </TouchableOpacity>
         ))}
       </View>

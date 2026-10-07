@@ -1,7 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+    ActivityIndicator,
+    Alert,
     Image,
     Platform,
     SafeAreaView,
@@ -13,15 +15,104 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import { supabase } from "../../../lib/supabase";
 
 export default function EditStudentProfileScreen() {
   const router = useRouter();
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [education, setEducation] = useState("");
+  const [location, setLocation] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [showToast, setShowToast] = useState(false);
 
-  const handleSave = () => {
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3000);
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadProfile() {
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError) throw userError;
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("full_name, email, phone_number, education, location")
+          .eq("id", user.id)
+          .single();
+        if (error) throw error;
+
+        if (isMounted) {
+          setFullName(data.full_name ?? "");
+          setEmail(data.email ?? user.email ?? "");
+          setPhoneNumber(data.phone_number ?? "");
+          setEducation(data.education ?? "");
+          setLocation(data.location ?? "");
+        }
+      } catch (error) {
+        console.error("Failed to load student profile:", error);
+        Alert.alert("Error", "Unable to load your profile.");
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    loadProfile();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!user) {
+        Alert.alert("Error", "Please sign in to save your profile.");
+        return;
+      }
+
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          full_name: fullName,
+          phone_number: phoneNumber,
+          education,
+          location,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+      if (error) {
+        Alert.alert("Error", error.message);
+        return;
+      }
+
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    } catch (error) {
+      console.error("Failed to save student profile:", error);
+      Alert.alert("Error", error instanceof Error ? error.message : "Unable to save your profile.");
+    } finally {
+      setSaving(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ActivityIndicator size="large" color="#2563EB" />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -98,6 +189,8 @@ export default function EditStudentProfileScreen() {
               <Ionicons name="person-outline" size={18} color="#64748B" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
+                value={fullName}
+                onChangeText={setFullName}
                 placeholder="Alex Rivera"
                 placeholderTextColor="#94A3B8"
               />
@@ -117,7 +210,7 @@ export default function EditStudentProfileScreen() {
               <Ionicons name="mail-outline" size={18} color="#64748B" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                value="alex.rivera@studentmail.edu"
+                value={email}
                 editable={false}
                 placeholderTextColor="#94A3B8"
               />
@@ -131,6 +224,8 @@ export default function EditStudentProfileScreen() {
               <Ionicons name="call-outline" size={18} color="#64748B" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
+                value={phoneNumber}
+                onChangeText={setPhoneNumber}
                 placeholder="+1 (555) 382-9014"
                 placeholderTextColor="#94A3B8"
               />
@@ -147,11 +242,12 @@ export default function EditStudentProfileScreen() {
               </View>
             </View>
             <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
-              <Text style={styles.label}>Track / Pathway</Text>
+              <Text style={styles.label}>Education</Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
-                  value="AP & Honors Track"
+                  value={education}
+                  onChangeText={setEducation}
                   placeholderTextColor="#94A3B8"
                 />
               </View>
@@ -160,12 +256,14 @@ export default function EditStudentProfileScreen() {
 
           {/* School / Institution */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>School / Institution</Text>
+            <Text style={styles.label}>Location</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="school-outline" size={18} color="#64748B" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="Oakridge High School"
+                value={location}
+                onChangeText={setLocation}
+                placeholder="Enter your location"
                 placeholderTextColor="#94A3B8"
               />
             </View>
@@ -174,9 +272,9 @@ export default function EditStudentProfileScreen() {
 
         {/* --- ACTION BUTTONS --- */}
         <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+          <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
             <Ionicons name="checkmark" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-            <Text style={styles.saveBtnText}>Save Changes</Text>
+            <Text style={styles.saveBtnText}>{saving ? "Saving..." : "Save Changes"}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()}>

@@ -22,7 +22,8 @@ function AppNavigator() {
       currentSegment === '(student)' ||
       currentSegment === '(tutor)' ||
       currentSegment === '(admin)' ||
-      currentSegment === 'dashboard';
+      currentSegment === 'dashboard' ||
+      (currentSegment === 'notification' && profile?.role === 'student');
     const isAuthScreen =
       currentSegment === 'login' ||
       currentSegment === 'student_register' ||
@@ -59,7 +60,7 @@ function AppNavigator() {
         }
       }
     } else if (!session) {
-      if (inAuthGroup) {
+      if (inAuthGroup || currentSegment === 'notification') {
         router.replace('/welcome');
       }
     }

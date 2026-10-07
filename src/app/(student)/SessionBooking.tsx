@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import {
+    Alert,
     Image,
     Platform,
     SafeAreaView,
@@ -27,6 +28,11 @@ interface TutorDetails {
   subjects: string[];
 }
 
+interface StudentWalletProfile {
+  full_name: string | null;
+  wallet_balance: number;
+}
+
 export default function SessionBookingScreen() {
   const router = useRouter();
   const { tutorId } = useLocalSearchParams<{ tutorId?: string }>();
@@ -37,6 +43,9 @@ export default function SessionBookingScreen() {
   const [selectedDateIdx, setSelectedDateIdx] = useState(0);
   const [selectedLengthIdx, setSelectedLengthIdx] = useState(1);
   const [selectedSlotIdx, setSelectedSlotIdx] = useState(0);
+  const [userProfile, setUserProfile] = useState<StudentWalletProfile | null>(null);
+  const [booking, setBooking] = useState(false);
+  const [walletLoading, setWalletLoading] = useState(true);
 
   const [tutor, setTutor] = useState<TutorDetails>({
     id: tutorId || "demo-tutor-1",
@@ -50,7 +59,46 @@ export default function SessionBookingScreen() {
   });
 
   const [availabilityMap, setAvailabilityMap] = useState<Record<string, { morning: boolean; afternoon: boolean; evening: boolean }>>({});
-  const [bookedSlotsList, setBookedSlotsList] = useState<Array<{ tutorId: string; date: string; timeSlot: string }>>([]);
+  const [bookedSlotsList, setBookedSlotsList] = useState<{ tutorId: string; date: string; timeSlot: string }[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadStudentProfile() {
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError) throw userError;
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("full_name, wallet_balance")
+          .eq("id", user.id)
+          .single();
+        if (error) throw error;
+
+        if (isMounted) {
+          setUserProfile({
+            full_name: data.full_name,
+            wallet_balance: data.wallet_balance == null ? 0 : Number(data.wallet_balance),
+          });
+        }
+      } catch (error) {
+        console.error("Failed to load student wallet:", error);
+        Alert.alert("Error", "Unable to load your wallet balance.");
+      } finally {
+        if (isMounted) setWalletLoading(false);
+      }
+    }
+
+    loadStudentProfile();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Fetch tutor profile and availability from Supabase by tutor_id
   useEffect(() => {
@@ -247,37 +295,44 @@ const isValidUUID = (str?: string): boolean =>
   !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
   const handleConfirm = async () => {
-    let bookingRef = "TM-" + Math.floor(100000 + Math.random() * 900000);
-
+    setBooking(true);
     try {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if ((userProfile?.wallet_balance ?? 0) < numericPrice) {
+        Alert.alert("Insufficient Balance", "Please add funds to continue.");
+        return;
+      }
 
-      // Ensure valid UUIDs for Postgres UUID column requirements
+      const {
+        data: { user: currentUser },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!currentUser) {
+        Alert.alert("Error", "Please sign in to book a session.");
+        return;
+      }
+
       let dbTutorId = tutor.id;
       if (!isValidUUID(dbTutorId)) {
-        const { data: prof } = await supabase
+        const { data: prof, error: tutorError } = await supabase
           .from('profiles')
           .select('id')
           .eq('role', 'tutor')
           .limit(1)
           .maybeSingle();
-
-        if (prof?.id && isValidUUID(prof.id)) {
-          dbTutorId = prof.id;
-        } else {
-          dbTutorId = "a0000000-0000-0000-0000-000000000001";
+        if (tutorError) throw tutorError;
+        if (!prof?.id || !isValidUUID(prof.id)) {
+          throw new Error("A valid tutor profile is required to book a session.");
         }
+        dbTutorId = prof.id;
       }
 
-      let dbStudentId: string | null = currentUser?.id || null;
-      if (dbStudentId && !isValidUUID(dbStudentId)) {
-        dbStudentId = null;
-      }
-
-      const newBookingData = {
+      const { data: newBooking, error: bookingError } = await supabase
+        .from("bookings")
+        .insert({
         tutor_id: dbTutorId,
-        student_id: dbStudentId,
-        student_name: currentUser?.user_metadata?.full_name || currentUser?.email?.split('@')[0] || "Student",
+        student_id: currentUser.id,
+        student_name: userProfile?.full_name || currentUser.user_metadata?.full_name || currentUser.email?.split("@")[0] || "Student",
         tutor_name: tutor.name,
         subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
         focus_notes: focusText || "",
@@ -288,60 +343,111 @@ const isValidUUID = (str?: string): boolean =>
         hourly_rate: tutor.hourlyRate,
         total_price: numericPrice,
         status: "confirmed",
-      };
-
-      const { data: dbBooking, error: dbError } = await supabase
-        .from("bookings")
-        .insert([newBookingData])
+      })
         .select()
-        .maybeSingle();
-
-      if (dbError) {
-        console.error("Supabase Booking Insert Error:", dbError.message, dbError.details, dbError.hint);
-      } else if (dbBooking?.booking_ref) {
-        bookingRef = dbBooking.booking_ref;
-        console.log("Booking stored successfully in Supabase DB! Ref:", dbBooking.booking_ref);
+        .single();
+      if (bookingError) throw bookingError;
+      if (!newBooking.booking_ref) {
+        const { error: rollbackBookingError } = await supabase
+          .from("bookings")
+          .delete()
+          .eq("id", newBooking.id);
+        if (rollbackBookingError) {
+          console.error("Failed to remove booking without a reference:", rollbackBookingError);
+        }
+        throw new Error("The booking was saved without a booking reference.");
       }
 
-      // Local storage backup
-      const localBooking = {
-        id: dbBooking?.id || `b_${Date.now()}`,
-        bookingRef,
-        tutorId: tutor.id,
-        tutorName: tutor.name,
-        tutorAvatar: tutor.avatar,
-        date: dateKey,
-        timeSlot: selectedSlotText,
-        subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
-        focusText,
-        price: numericPrice,
-        duration: selectedLengthObj.time,
-        deliveryFormat: delivery,
-        status: "confirmed",
-        createdAt: new Date().toISOString(),
-      };
+      const newBalance = (userProfile?.wallet_balance ?? 0) - numericPrice;
+      const { error: balanceError } = await supabase
+        .from("profiles")
+        .update({ wallet_balance: newBalance })
+        .eq("id", currentUser.id);
+      if (balanceError) {
+        const { error: rollbackBookingError } = await supabase
+          .from("bookings")
+          .delete()
+          .eq("id", newBooking.id);
+        if (rollbackBookingError) {
+          console.error("Failed to remove booking after wallet update failed:", rollbackBookingError);
+        }
+        throw balanceError;
+      }
 
-      const existingStr = await AsyncStorage.getItem("@tutormate_booked_sessions");
-      const existingList = existingStr ? JSON.parse(existingStr) : [];
-      existingList.push(localBooking);
-      await AsyncStorage.setItem("@tutormate_booked_sessions", JSON.stringify(existingList));
-    } catch (e) {
-      console.warn("Failed to persist booking to database:", e);
+      const { error: transactionError } = await supabase
+        .from("wallet_transactions")
+        .insert({
+          user_id: currentUser.id,
+          amount: -numericPrice,
+          type: "payment",
+          description: `Booking ${newBooking.booking_ref}`,
+          booking_id: newBooking.id,
+        });
+      if (transactionError) {
+        const { error: rollbackBalanceError } = await supabase
+          .from("profiles")
+          .update({ wallet_balance: userProfile?.wallet_balance ?? 0 })
+          .eq("id", currentUser.id);
+        const { error: rollbackBookingError } = await supabase
+          .from("bookings")
+          .delete()
+          .eq("id", newBooking.id);
+        if (rollbackBalanceError || rollbackBookingError) {
+          console.error("Failed to roll back booking payment:", {
+            balanceError: rollbackBalanceError,
+            bookingError: rollbackBookingError,
+          });
+        }
+        throw transactionError;
+      }
+
+      try {
+        const storedBookings = await AsyncStorage.getItem("@tutormate_booked_sessions");
+        const localBookings = storedBookings ? JSON.parse(storedBookings) : [];
+        localBookings.push({
+          id: newBooking.id,
+          bookingRef: newBooking.booking_ref,
+          studentId: currentUser.id,
+          tutorId: tutor.id,
+          tutorName: tutor.name,
+          tutorAvatar: tutor.avatar,
+          date: dateKey,
+          timeSlot: selectedSlotText,
+          subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
+          focusText,
+          price: numericPrice,
+          duration: selectedLengthObj.time,
+          deliveryFormat: delivery,
+          status: "confirmed",
+          createdAt: new Date().toISOString(),
+        });
+        await AsyncStorage.setItem("@tutormate_booked_sessions", JSON.stringify(localBookings));
+      } catch (storageError) {
+        console.warn("Could not save local booking cache:", storageError);
+      }
+
+      setUserProfile((previous) =>
+        previous ? { ...previous, wallet_balance: newBalance } : previous,
+      );
+      router.push({
+        pathname: "/(student)/BookingConfirmed",
+        params: {
+          bookingRef: newBooking.booking_ref,
+          tutorName: tutor.name,
+          tutorAvatar: tutor.avatar,
+          subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
+          timeSlot: selectedSlotText,
+          dateKey,
+          price: String(numericPrice),
+          focusText,
+        },
+      });
+    } catch (error) {
+      console.error("Failed to book session:", error);
+      Alert.alert("Error", error instanceof Error ? error.message : "Unable to book the session.");
+    } finally {
+      setBooking(false);
     }
-
-    router.push({
-      pathname: "/(student)/BookingConfirmed",
-      params: {
-        bookingRef,
-        tutorName: tutor.name,
-        tutorAvatar: tutor.avatar,
-        subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
-        timeSlot: selectedSlotText,
-        dateKey,
-        price: String(numericPrice),
-        focusText,
-      },
-    });
   };
 
   return (
@@ -554,7 +660,7 @@ const isValidUUID = (str?: string): boolean =>
               </View>
               <View>
                 <Text style={styles.walletTitle}>Student Wallet Balance</Text>
-                <Text style={styles.balanceText}>$120.00 Available</Text>
+                <Text style={styles.balanceText}>${(userProfile?.wallet_balance ?? 0).toFixed(2)} Available</Text>
               </View>
             </View>
             <View style={styles.autoPayBadge}>
@@ -579,7 +685,7 @@ const isValidUUID = (str?: string): boolean =>
             </View>
             <View style={[styles.feeRow, { marginTop: 12 }]}>
               <Text style={styles.remainingLabel}>Remaining balance after booking:</Text>
-              <Text style={styles.remainingValue}>${Math.max(0, 120 - numericPrice)}.00</Text>
+              <Text style={styles.remainingValue}>${Math.max(0, (userProfile?.wallet_balance ?? 0) - numericPrice).toFixed(2)}</Text>
             </View>
           </View>
         </View>
@@ -591,8 +697,14 @@ const isValidUUID = (str?: string): boolean =>
         </View>
 
         {/* --- CONFIRM BUTTON --- */}
-        <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
-          <Text style={styles.confirmBtnText}>Confirm & Book Session • ${numericPrice}.00</Text>
+        <TouchableOpacity
+          style={styles.confirmBtn}
+          onPress={handleConfirm}
+          disabled={booking || walletLoading}
+        >
+          <Text style={styles.confirmBtnText}>
+            {booking ? "Booking..." : `Confirm & Book Session • $${numericPrice.toFixed(2)} →`}
+          </Text>
           <Ionicons name="arrow-forward" size={20} color="#FFFFFF" style={{ marginLeft: 8 }} />
         </TouchableOpacity>
       </ScrollView>

@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import {
+  ActivityIndicator,
+  Alert,
   Image,
   Platform,
   SafeAreaView,
@@ -17,103 +18,143 @@ import {
 
 const DEFAULT_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
 
+interface SessionItem {
+  id: string;
+  tutorName: string;
+  tutorAvatar: string;
+  subject: string;
+  topic: string;
+  date: string;
+  time: string;
+  status: string;
+  duration: string;
+  delivery: string;
+  rating: string;
+  bookingRef: string;
+  unlockTime?: string;
+  info?: string;
+  features?: string;
+}
+
 export default function MySessionsScreen() {
   const router = useRouter();
-  const [sessionsList, setSessionsList] = useState<any[]>([]);
+  const [sessionsList, setSessionsList] = useState<SessionItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function fetchBookings() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-
-        // 1. Fetch from Supabase — build the query with filter BEFORE awaiting
-        let dbQuery = supabase
-          .from("bookings")
-          .select("*")
-          .order("session_date", { ascending: true });
-
-        if (user?.id) {
-          dbQuery = dbQuery.eq("student_id", user.id);
-        }
-
-        const { data: dbBookings } = await dbQuery;
-
-        // 2. Fetch from AsyncStorage (local backup after offline booking)
-        let localBookings: any[] = [];
-        try {
-          const stored = await AsyncStorage.getItem("@tutormate_booked_sessions");
-          if (stored) localBookings = JSON.parse(stored);
-        } catch {}
-
-        // Only include local bookings that match the logged-in student
-        const filteredLocal = user?.id
-          ? localBookings.filter((b: any) => !b.studentId || b.studentId === user.id)
-          : localBookings;
-
-        const mergedMap: Record<string, any> = {};
-
-        // Add local bookings first (as fallback)
-        filteredLocal.forEach((b: any, idx: number) => {
-          const idStr = b.id || `local_${idx}`;
-          mergedMap[idStr] = {
-            id: idStr,
-            tutorName: b.tutorName || "Tutor",
-            tutorAvatar: b.tutorAvatar || DEFAULT_AVATAR,
-            subject: b.subject || "Tutoring Session",
-            topic: b.focusText || "Custom Tutoring Session",
-            date: b.date || "",
-            time: b.timeSlot || "",
-            status: b.status ? (b.status.charAt(0).toUpperCase() + b.status.slice(1)) : "Confirmed",
-            duration: b.duration || "60 mins (1 hr)",
-            delivery: b.deliveryFormat || "Interactive Video & Canvas Whiteboard",
-            rating: "5.0",
-            bookingRef: b.bookingRef || "",
-          };
-        });
-
-        // Add / override with DB bookings (authoritative source)
-        if (dbBookings && dbBookings.length > 0) {
-          dbBookings.forEach((b: any) => {
-            mergedMap[b.id] = {
-              id: b.id,
-              tutorName: b.tutor_name || "Tutor",
-              tutorAvatar: DEFAULT_AVATAR,
-              subject: b.subject || "Tutoring Session",
-              topic: b.focus_notes || "Custom Tutoring Session",
-              date: b.session_date || "",
-              time: b.time_slot || "",
-              status: b.status ? (b.status.charAt(0).toUpperCase() + b.status.slice(1)) : "Confirmed",
-              duration: b.duration || "60 mins (1 hr)",
-              delivery: b.delivery_format || "Interactive Video & Canvas Whiteboard",
-              rating: "5.0",
-              bookingRef: b.booking_ref || "",
-            };
-          });
-        }
-
-        if (isMounted) {
-          setSessionsList(Object.values(mergedMap));
-          setLoading(false);
-        }
-      } catch (err) {
-        console.warn("Failed to fetch sessions:", err);
-        if (isMounted) setLoading(false);
+  const fetchBookings = useCallback(async () => {
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!user) {
+        setSessionsList([]);
+        return;
       }
+
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("*")
+        .eq("student_id", user.id)
+        .order("session_date", { ascending: true });
+      if (error) throw error;
+
+      setSessionsList(
+        (data ?? []).map((booking) => ({
+          id: booking.id,
+          tutorName: booking.tutor_name || "Tutor",
+          tutorAvatar: DEFAULT_AVATAR,
+          subject: booking.subject || "Tutoring Session",
+          topic: booking.focus_notes || "Custom Tutoring Session",
+          date: booking.session_date || "",
+          time: booking.time_slot || "",
+          status: booking.status
+            ? booking.status.charAt(0).toUpperCase() + booking.status.slice(1)
+            : "Confirmed",
+          duration: booking.duration || "60 mins (1 hr)",
+          delivery: booking.delivery_format || "Interactive Video & Canvas Whiteboard",
+          rating: "5.0",
+          bookingRef: booking.booking_ref || "",
+        })),
+      );
+    } catch (error) {
+      console.error("Failed to fetch sessions:", error);
+      if (Platform.OS === "web") {
+        window.alert("Error\n\nUnable to load your sessions.");
+      } else {
+        Alert.alert("Error", "Unable to load your sessions.");
+      }
+    } finally {
+      setLoading(false);
     }
-
-    fetchBookings();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(fetchBookings);
+  }, [fetchBookings]);
+
+  const confirmCancel = (session: SessionItem, onConfirm: () => void) => {
+    const message = `Are you sure you want to cancel your session with ${session.tutorName || "the tutor"}?`;
+    if (Platform.OS === "web") {
+      if (window.confirm(`Cancel Booking\n\n${message}`)) onConfirm();
+    } else {
+      Alert.alert("Cancel Booking", message, [
+        { text: "No", style: "cancel" },
+        { text: "Yes, Cancel", style: "destructive", onPress: onConfirm },
+      ]);
+    }
+  };
+
+  const handleCancelBooking = async (bookingId: string) => {
+    try {
+      const { error } = await supabase
+        .from("bookings")
+        .delete()
+        .eq("id", bookingId);
+      if (error) {
+        if (Platform.OS === "web") {
+          window.alert(`Error\n\n${error.message}`);
+        } else {
+          Alert.alert("Error", error.message);
+        }
+        return;
+      }
+
+      await fetchBookings();
+      if (Platform.OS === "web") {
+        window.alert("Booking Cancelled\n\nYour session has been cancelled successfully.");
+      } else {
+        Alert.alert("Cancelled", "Your session has been cancelled.");
+      }
+    } catch (error) {
+      console.error("Failed to cancel booking:", error);
+    }
+  };
+
+  const handleViewDetails = (session: SessionItem) => {
+    const details = `
+Tutor: ${session.tutorName || "—"}
+Subject: ${session.subject || "—"}
+Date: ${session.date || "—"}
+Time: ${session.time || "—"}
+Duration: ${session.duration || "—"}
+Status: ${session.status || "—"}
+Booking Ref: ${session.bookingRef || "—"}
+    `.trim();
+
+    if (Platform.OS === "web") {
+      window.alert(`Session Details\n\n${details}`);
+    } else {
+      Alert.alert("Session Details", details);
+    }
+  };
 
   const [activeTab, setActiveTab] = useState("all");
 
-  const todayCount = sessionsList.filter((s) => s.date?.toLowerCase().includes("today")).length;
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const todayCount = sessionsList.filter((s) => s.date === today).length;
   const confirmedCount = sessionsList.filter((s) => s.status?.toLowerCase().includes("confirm") || s.status?.toLowerCase().includes("feature")).length;
   const pendingCount = sessionsList.filter((s) => s.status?.toLowerCase().includes("pend")).length;
 
@@ -125,14 +166,19 @@ export default function MySessionsScreen() {
   ];
 
   const filteredSessions = sessionsList.filter((session) => {
-    if (activeTab === "today") return session.date?.toLowerCase().includes("today");
+    if (activeTab === "today") return session.date === today;
     if (activeTab === "confirmed") return session.status?.toLowerCase().includes("confirm") || session.status?.toLowerCase().includes("feature");
     if (activeTab === "pending") return session.status?.toLowerCase().includes("pend");
     return true;
   });
 
-  const featuredSession = filteredSessions[0] || sessionsList[0];
-  const upcomingSessions = filteredSessions.slice(1);
+  const upcomingBookings = [...sessionsList]
+    .filter((session) => session.date >= today)
+    .sort((first, second) => first.date.localeCompare(second.date));
+  const featuredSession = upcomingBookings[0];
+  const upcomingSessions = filteredSessions.filter(
+    (session) => session.id !== featuredSession?.id,
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -208,6 +254,8 @@ export default function MySessionsScreen() {
             );
           })}
         </ScrollView>
+
+        {loading && <ActivityIndicator size="large" color="#2563EB" />}
 
         {/* --- EMPTY STATE --- */}
         {!loading && sessionsList.length === 0 && (
@@ -353,8 +401,13 @@ export default function MySessionsScreen() {
               <View style={styles.cardActions}>
                 {isPending ? (
                   <>
-                    <TouchableOpacity style={[styles.secondaryBtn, { backgroundColor: '#FFF1F2' }]}>
-                      <Text style={[styles.secondaryBtnText, { color: '#EF4444' }]}>Cancel Request</Text>
+                    <TouchableOpacity
+                      style={[styles.secondaryBtn, { backgroundColor: '#FFF1F2' }]}
+                      onPress={() =>
+                        confirmCancel(session, () => handleCancelBooking(session.id))
+                      }
+                    >
+                      <Text style={[styles.secondaryBtnText, { color: '#EF4444' }]}>Cancel</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.secondaryBtn}>
                       <Text style={styles.secondaryBtnText}>Edit Booking</Text>
@@ -362,10 +415,18 @@ export default function MySessionsScreen() {
                   </>
                 ) : (
                   <>
-                    <TouchableOpacity style={styles.secondaryBtn}>
-                      <Text style={styles.secondaryBtnText}>Reschedule</Text>
+                    <TouchableOpacity
+                      style={[styles.secondaryBtn, { backgroundColor: '#FFF1F2' }]}
+                      onPress={() =>
+                        confirmCancel(session, () => handleCancelBooking(session.id))
+                      }
+                    >
+                      <Text style={[styles.secondaryBtnText, { color: '#EF4444' }]}>Cancel</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryBtn}>
+                    <TouchableOpacity
+                      style={styles.secondaryBtn}
+                      onPress={() => handleViewDetails(session)}
+                    >
                       <Text style={styles.secondaryBtnText}>View Details</Text>
                     </TouchableOpacity>
                   </>

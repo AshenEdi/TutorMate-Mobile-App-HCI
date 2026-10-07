@@ -3,10 +3,12 @@ import {
     Ionicons,
     MaterialCommunityIcons,
 } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
+import { supabase } from "../../../lib/supabase";
 import {
-    Image,
+    ActivityIndicator,
+    Alert,
     Platform,
     SafeAreaView,
     ScrollView,
@@ -23,125 +25,159 @@ interface CategoryItem {
   id: string;
   title: string;
   subtitle: string;
-  tutorsCount: number;
   iconName: string;
   iconBgColor: string;
   iconColor: string;
-  badgeBgColor: string;
-  badgeTextColor: string;
 }
 
 interface SessionItem {
   id: string;
   title: string;
   subtitle: string;
-  avatar: string;
-  badgeText: string;
-  badgeType: "zoom" | "confirmed" | "draft";
   date: string;
   duration: string;
-  rating: number;
-  reviewsCount: number;
+  status: string;
+  bookingRef: string;
   actionType: "join" | "details" | "reschedule";
 }
 
-// --- MOCK DATA ---
-const CATEGORIES: CategoryItem[] = [
+const STATIC_CATEGORIES: CategoryItem[] = [
   {
     id: "1",
     title: "Mathematics",
     subtitle: "Calculus & Algebra",
-    tutorsCount: 32,
     iconName: "sigma",
     iconBgColor: "#EEF2FF",
     iconColor: "#3B82F6",
-    badgeBgColor: "#E0E7FF",
-    badgeTextColor: "#3730A3",
   },
   {
     id: "2",
     title: "Physics & Science",
     subtitle: "Mechanics & Bio",
-    tutorsCount: 18,
     iconName: "flask",
     iconBgColor: "#E6FFFA",
     iconColor: "#0D9488",
-    badgeBgColor: "#CCFBF1",
-    badgeTextColor: "#0F766E",
   },
   {
     id: "3",
     title: "English & Lit",
     subtitle: "Essay Writing & Syntax",
-    tutorsCount: 24,
     iconName: "book-open",
     iconBgColor: "#FFEDD5",
     iconColor: "#EA580C",
-    badgeBgColor: "#FFEDD5",
-    badgeTextColor: "#9A3412",
   },
   {
     id: "4",
     title: "Coding & CS",
     subtitle: "Python, Data & Web",
-    tutorsCount: 29,
     iconName: "code",
     iconBgColor: "#E0F2FE",
     iconColor: "#0284C7",
-    badgeBgColor: "#E0F2FE",
-    badgeTextColor: "#0369A1",
-  },
-];
-
-const SESSIONS: SessionItem[] = [
-  {
-    id: "1",
-    title: "Math with Sarah Jenkins",
-    subtitle: "Multivariable Calculus & Derivatives",
-    avatar:
-      "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-    badgeText: "Zoom",
-    badgeType: "zoom",
-    date: "Tomorrow, 4:00 PM",
-    duration: "60 min",
-    rating: 4.95,
-    reviewsCount: 128,
-    actionType: "join",
-  },
-  {
-    id: "2",
-    title: "Physics with Dr. Alan Chen",
-    subtitle: "Electromagnetism & Circuit Laws",
-    avatar:
-      "https://images.unsplash.com/photo-1560250097-0b93528c311a?q=80&w=200&auto=format&fit=crop",
-    badgeText: "Confirmed",
-    badgeType: "confirmed",
-    date: "Thursday, 2:30 PM",
-    duration: "45 min",
-    rating: 5.0,
-    reviewsCount: 84,
-    actionType: "details",
-  },
-  {
-    id: "3",
-    title: "English Essay Review with...",
-    subtitle: "College Admissions Essay Feedback",
-    avatar:
-      "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop",
-    badgeText: "Draft Ready",
-    badgeType: "draft",
-    date: "Friday, 11:00 AM",
-    duration: "30 min",
-    rating: 4.88,
-    reviewsCount: 210,
-    actionType: "reschedule",
   },
 ];
 
 export default function StudentHomeScreen() {
   const router = useRouter();
+  const [userName, setUserName] = useState("Student");
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [upcomingSessions, setUpcomingSessions] = useState<SessionItem[]>([]);
+  const [categories, setCategories] = useState<CategoryItem[]>(STATIC_CATEGORIES);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("Home");
+
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+
+      async function loadDashboardData() {
+        setLoading(true);
+        try {
+          const {
+            data: { user },
+            error: userError,
+          } = await supabase.auth.getUser();
+          if (userError) throw userError;
+          if (!user) {
+            if (isMounted) {
+              setUserName("Student");
+              setWalletBalance(0);
+              setUpcomingSessions([]);
+            }
+            return;
+          }
+
+          const [profileResult, bookingsResult] = await Promise.all([
+            supabase
+              .from("profiles")
+              .select("full_name, wallet_balance")
+              .eq("id", user.id)
+              .single(),
+            supabase
+              .from("bookings")
+              .select("*")
+              .eq("student_id", user.id)
+              .gte("session_date", new Date().toISOString().split("T")[0])
+              .order("session_date", { ascending: true })
+              .limit(5),
+          ]);
+          if (profileResult.error) throw profileResult.error;
+          if (bookingsResult.error) throw bookingsResult.error;
+
+          const sessions: SessionItem[] = (bookingsResult.data ?? []).map((booking) => {
+            const status = String(booking.status || "Upcoming");
+            const normalizedStatus = status.toLowerCase();
+            const date = booking.session_date
+              ? new Date(`${booking.session_date}T00:00:00`).toLocaleDateString()
+              : "Date not set";
+
+            return {
+              id: String(booking.id),
+              title: `${booking.subject || "Tutoring session"}${booking.tutor_name ? ` with ${booking.tutor_name}` : ""}`,
+              subtitle: booking.subject || "Upcoming tutoring session",
+              date: booking.time_slot ? `${date}, ${booking.time_slot}` : date,
+              duration: booking.duration ? `${booking.duration} min` : "",
+              status,
+              bookingRef: booking.booking_ref || "—",
+              actionType:
+                normalizedStatus === "confirmed"
+                  ? "join"
+                  : normalizedStatus === "pending"
+                    ? "reschedule"
+                    : "details",
+            };
+          });
+
+          if (isMounted) {
+            setUserName(profileResult.data.full_name || "Student");
+            setWalletBalance(Number(profileResult.data.wallet_balance) || 0);
+            setUpcomingSessions(sessions);
+            setStreak(0);
+            setCategories(STATIC_CATEGORIES);
+          }
+        } catch (error) {
+          console.error("Failed to load student dashboard:", error);
+          Alert.alert("Error", "Unable to load your dashboard data.");
+        } finally {
+          if (isMounted) setLoading(false);
+        }
+      }
+
+      void loadDashboardData();
+      return () => {
+        isMounted = false;
+      };
+    }, []),
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ActivityIndicator size="large" color="#2563EB" />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -180,13 +216,15 @@ export default function StudentHomeScreen() {
                 style={{ marginLeft: 4 }}
               />
             </View>
-            <Text style={styles.userName}>Alex Rivera</Text>
+            <Text style={styles.userName}>{userName || "Student"}</Text>
           </View>
 
-          <View style={styles.streakBadge}>
-            <MaterialCommunityIcons name="fire" size={16} color="#D97706" />
-            <Text style={styles.streakText}>4 Day Streak</Text>
-          </View>
+          {streak > 0 && (
+            <View style={styles.streakBadge}>
+              <MaterialCommunityIcons name="fire" size={16} color="#D97706" />
+              <Text style={styles.streakText}>{streak} Day Streak</Text>
+            </View>
+          )}
         </View>
 
         {/* --- SEARCH BAR --- */}
@@ -212,11 +250,11 @@ export default function StudentHomeScreen() {
         {/* --- CATEGORIES SECTION --- */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Explore Categories</Text>
-          <Text style={styles.sectionSubtitle}>4 Subjects</Text>
+          <Text style={styles.sectionSubtitle}>{categories.length} Subjects</Text>
         </View>
 
         <View style={styles.categoriesGrid}>
-          {CATEGORIES.map((cat) => (
+          {categories.map((cat) => (
             <TouchableOpacity
               key={cat.id}
               style={styles.categoryCard}
@@ -247,21 +285,6 @@ export default function StudentHomeScreen() {
                     />
                   )}
                 </View>
-                <View
-                  style={[
-                    styles.tutorBadge,
-                    { backgroundColor: cat.badgeBgColor },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.tutorBadgeText,
-                      { color: cat.badgeTextColor },
-                    ]}
-                  >
-                    {cat.tutorsCount} Tutors
-                  </Text>
-                </View>
               </View>
               <Text style={styles.categoryTitle}>{cat.title}</Text>
               <Text style={styles.categorySubtitle}>{cat.subtitle}</Text>
@@ -270,20 +293,26 @@ export default function StudentHomeScreen() {
         </View>
 
         {/* --- MIDTERM PREP BANNER --- */}
-        <TouchableOpacity style={styles.prepBanner} activeOpacity={0.9}>
+        <TouchableOpacity
+          style={styles.prepBanner}
+          activeOpacity={0.9}
+          onPress={() => router.push("/(student)/MySessions")}
+        >
           <View style={styles.prepLeft}>
             <View style={styles.prepIconBg}>
               <Ionicons name="book" size={20} color="#FFFFFF" />
             </View>
             <View>
-              <Text style={styles.prepTitle}>Midterm Prep Plan</Text>
+              <Text style={styles.prepTitle}>This week</Text>
               <Text style={styles.prepSubtitle}>
-                3 sessions booked this week
+                {upcomingSessions.length
+                  ? `${upcomingSessions.length} sessions booked this week`
+                  : "No sessions this week"}
               </Text>
             </View>
           </View>
           <View style={styles.prepRight}>
-            <Text style={styles.trackText}>Track</Text>
+            <Text style={styles.trackText}>${walletBalance.toFixed(2)}</Text>
             <Ionicons name="arrow-forward" size={16} color="#2563EB" />
           </View>
         </TouchableOpacity>
@@ -294,17 +323,29 @@ export default function StudentHomeScreen() {
             <Text style={styles.sectionTitle}>Upcoming Sessions</Text>
             <View style={styles.activeDot} />
           </View>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push("/(student)/MySessions")}>
             <Text style={styles.seeAllText}>See all &gt;</Text>
           </TouchableOpacity>
         </View>
 
         {/* SESSION CARDS */}
-        {SESSIONS.map((session) => (
+        {upcomingSessions.length === 0 ? (
+          <View style={styles.sessionCard}>
+            <Text style={styles.sessionTitle}>No upcoming sessions. Book one now!</Text>
+            <TouchableOpacity
+              style={styles.detailsBtn}
+              onPress={() => router.push("/(student)/searchscreen")}
+            >
+              <Text style={styles.detailsBtnText}>Search Tutors</Text>
+            </TouchableOpacity>
+          </View>
+        ) : upcomingSessions.map((session) => (
           <View key={session.id} style={styles.sessionCard}>
             {/* Header: Avatar, Details & Platform Badge */}
             <View style={styles.sessionMain}>
-              <Image source={{ uri: session.avatar }} style={styles.avatar} />
+              <View style={styles.avatar}>
+                <Ionicons name="person" size={22} color="#64748B" />
+              </View>
               <View style={styles.sessionInfo}>
                 <Text style={styles.sessionTitle}>{session.title}</Text>
                 <Text style={styles.sessionSubtitle}>{session.subtitle}</Text>
@@ -318,39 +359,24 @@ export default function StudentHomeScreen() {
               </View>
 
               {/* Status Badges */}
-              {session.badgeType === "zoom" && (
-                <View style={[styles.statusBadge, styles.zoomBadge]}>
-                  <View style={styles.greenDot} />
-                  <Text style={styles.zoomText}>{session.badgeText}</Text>
-                </View>
-              )}
-              {session.badgeType === "confirmed" && (
-                <View style={[styles.statusBadge, styles.confirmedBadge]}>
-                  <Text style={styles.confirmedText}>{session.badgeText}</Text>
-                </View>
-              )}
-              {session.badgeType === "draft" && (
-                <View style={[styles.statusBadge, styles.draftBadge]}>
-                  <Text style={styles.draftText}>{session.badgeText}</Text>
-                </View>
-              )}
+              <View style={[styles.statusBadge, styles.confirmedBadge]}>
+                <Text style={styles.confirmedText}>{session.status}</Text>
+              </View>
             </View>
 
             {/* Bottom Row: Ratings & Action Buttons */}
             <View style={styles.sessionBottomRow}>
               <View style={styles.ratingRow}>
-                <Ionicons name="star" size={14} color="#D97706" />
-                <Text style={styles.ratingText}>
-                  {session.rating.toFixed(session.rating % 1 === 0 ? 1 : 2)}{" "}
-                  <Text style={styles.reviewsText}>
-                    ({session.reviewsCount} reviews)
-                  </Text>
-                </Text>
+                <Ionicons name="document-text-outline" size={14} color="#64748B" />
+                <Text style={styles.ratingText}>Ref: {session.bookingRef}</Text>
               </View>
 
               {/* Dynamic Actions */}
               {session.actionType === "join" && (
-                <TouchableOpacity style={styles.joinBtn}>
+                <TouchableOpacity
+                  style={styles.joinBtn}
+                  onPress={() => Alert.alert("Coming Soon", "Video room integration")}
+                >
                   <Ionicons
                     name="videocam"
                     size={16}
@@ -362,7 +388,10 @@ export default function StudentHomeScreen() {
               )}
 
               {session.actionType === "details" && (
-                <TouchableOpacity style={styles.detailsBtn}>
+                <TouchableOpacity
+                  style={styles.detailsBtn}
+                  onPress={() => router.push("/(student)/MySessions")}
+                >
                   <Ionicons
                     name="time-outline"
                     size={16}
@@ -378,7 +407,10 @@ export default function StudentHomeScreen() {
                   <TouchableOpacity style={styles.paperclipBtn}>
                     <Ionicons name="attach-outline" size={18} color="#4B5563" />
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.rescheduleBtn}>
+                  <TouchableOpacity
+                    style={styles.rescheduleBtn}
+                    onPress={() => router.push("/(student)/MySessions")}
+                  >
                     <Text style={styles.rescheduleBtnText}>Reschedule</Text>
                   </TouchableOpacity>
                 </View>
@@ -395,8 +427,8 @@ export default function StudentHomeScreen() {
           <View style={styles.tipContent}>
             <Text style={styles.tipTitle}>Quick Study Tip</Text>
             <Text style={styles.tipDescription}>
-              Upload your assignment rubric 15 minutes before your call with
-              Emma to maximize your 30-minute review.
+              Bring your questions and learning materials to your next session
+              to make the most of your study time.
             </Text>
           </View>
         </View>

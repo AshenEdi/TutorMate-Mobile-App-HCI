@@ -1,16 +1,20 @@
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { useAuth, UserProfile } from "../../context/AuthContext";
+import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../../lib/supabase";
 import {
+    ActivityIndicator,
+    Alert,
     Image,
+    Modal,
     Platform,
     SafeAreaView,
     ScrollView,
     StatusBar,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
     View,
 } from "react-native";
@@ -32,59 +36,26 @@ interface SubjectPill {
   bgColor: string;
 }
 
-// --- MOCK DATA ---
-const PROFILE_STATS: StatCard[] = [
-  {
-    id: "1",
-    value: "14",
-    label: "Sessions",
-    icon: "checkmark-circle-outline",
-    iconColor: "#2563EB",
-    bgIconColor: "#EFF6FF",
-  },
-  {
-    id: "2",
-    value: "4–Day",
-    label: "Streak",
-    icon: "flame-outline",
-    iconColor: "#D97706",
-    bgIconColor: "#FEF3C7",
-  },
-  {
-    id: "3",
-    value: "4.9",
-    label: "Rating (12)",
-    icon: "star-outline",
-    iconColor: "#D97706",
-    bgIconColor: "#FEF3C7",
-  },
-  {
-    id: "4",
-    value: "2",
-    label: "Mentors",
-    icon: "school-outline",
-    iconColor: "#0D9488",
-    bgIconColor: "#CCFBF1",
-  },
-];
-
-const ACTIVE_SUBJECTS: SubjectPill[] = [
-  { id: "1", name: "AP Calculus BC", dotColor: "#2563EB", bgColor: "#EFF6FF" },
-  { id: "2", name: "AP Physics C", dotColor: "#0D9488", bgColor: "#E6FFFA" },
-  { id: "3", name: "College Essays", dotColor: "#F59E0B", bgColor: "#FEF3C7" },
-  { id: "4", name: "Linear Algebra", dotColor: "#6B7280", bgColor: "#F1F5F9" },
-];
-
-const TARGET_UNIVERSITIES = [
-  { id: "1", name: "Stanford", icon: "school-outline" },
-  { id: "2", name: "MIT", icon: "school-outline" },
-  { id: "3", name: "UC Berkeley", icon: "school-outline" },
-];
+interface StudentProfileData {
+  full_name: string | null;
+  email: string | null;
+  education: string | null;
+  avatar_url: string | null;
+  wallet_balance: number | null;
+}
 
 export default function UserProfileScreen() {
   const router = useRouter();
-  const { profile, user, signOut } = useAuth();
-  const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
+  const { profile: authProfile, user, signOut } = useAuth();
+  const [profile, setProfile] = useState<StudentProfileData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sessionsCompleted, setSessionsCompleted] = useState(0);
+  const [ratingAverage, setRatingAverage] = useState(0);
+  const [mentorCount, setMentorCount] = useState(0);
+  const [activeSubjects, setActiveSubjects] = useState<SubjectPill[]>([]);
+  const [addFundsModalVisible, setAddFundsModalVisible] = useState(false);
+  const [addFundsAmount, setAddFundsAmount] = useState("");
+  const [addingFunds, setAddingFunds] = useState(false);
   const [activeTab, setActiveTab] = useState("Profile");
 
   useEffect(() => {
@@ -92,21 +63,98 @@ export default function UserProfileScreen() {
 
     async function loadStudentData() {
       try {
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        const {
+          data: { user: currentUser },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError) throw userError;
         const activeUser = currentUser || user;
         if (!activeUser) return;
 
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from("profiles")
-          .select("*")
+          .select("full_name, email, education, avatar_url, wallet_balance")
           .eq("id", activeUser.id)
           .single();
+        if (error) throw error;
 
-        if (isMounted && data) {
-          setFetchedProfile(data as UserProfile);
+        const [
+          completedSessionsResult,
+          mentorsResult,
+          reviewsResult,
+          subjectsResult,
+        ] = await Promise.all([
+          supabase
+            .from("bookings")
+            .select("*", { count: "exact", head: true })
+            .eq("student_id", activeUser.id)
+            .eq("status", "completed"),
+          supabase
+            .from("bookings")
+            .select("tutor_id")
+            .eq("student_id", activeUser.id)
+            .not("tutor_id", "is", null),
+          supabase
+            .from("reviews")
+            .select("rating")
+            .eq("student_id", activeUser.id),
+          supabase
+            .from("bookings")
+            .select("subject")
+            .eq("student_id", activeUser.id)
+            .not("subject", "is", null),
+        ]);
+        if (completedSessionsResult.error) throw completedSessionsResult.error;
+        if (mentorsResult.error) throw mentorsResult.error;
+        if (reviewsResult.error) throw reviewsResult.error;
+        if (subjectsResult.error) throw subjectsResult.error;
+
+        const tutorIds = new Set(
+          (mentorsResult.data ?? [])
+            .map((booking) => booking.tutor_id)
+            .filter((tutorId): tutorId is string => Boolean(tutorId)),
+        );
+        const ratings = (reviewsResult.data ?? [])
+          .map((review) => Number(review.rating))
+          .filter(Number.isFinite);
+        const averageRating = ratings.length
+          ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
+          : 0;
+        const subjectNames = Array.from(
+          new Set(
+            (subjectsResult.data ?? [])
+              .map((booking) => booking.subject?.trim())
+              .filter((subject): subject is string => Boolean(subject)),
+          ),
+        );
+        const subjectColors = [
+          { dotColor: "#2563EB", bgColor: "#EFF6FF" },
+          { dotColor: "#0D9488", bgColor: "#E6FFFA" },
+          { dotColor: "#F59E0B", bgColor: "#FEF3C7" },
+          { dotColor: "#6B7280", bgColor: "#F1F5F9" },
+        ];
+
+        if (isMounted) {
+          setProfile({
+            ...data,
+            wallet_balance: data.wallet_balance == null ? 0 : Number(data.wallet_balance),
+          });
+          setSessionsCompleted(completedSessionsResult.count ?? 0);
+          setMentorCount(tutorIds.size);
+          setRatingAverage(averageRating);
+          setActiveSubjects(
+            subjectNames.map((name, index) => ({
+              id: name,
+              name,
+              ...subjectColors[index % subjectColors.length],
+            })),
+          );
         }
-      } catch (err) {
-        console.warn("Error fetching student profile:", err);
+      } catch (error) {
+        console.error("Error fetching student profile:", error);
+        Alert.alert("Error", "Unable to load your profile.");
+      } finally {
+        if (isMounted) setLoading(false);
       }
     }
 
@@ -117,18 +165,132 @@ export default function UserProfileScreen() {
     };
   }, [user]);
 
-  const activeProfile = fetchedProfile || profile;
+  const activeProfile = profile || authProfile;
 
   const userName =
     activeProfile?.full_name ||
     user?.user_metadata?.full_name ||
     (user?.email ? user.email.split("@")[0] : null) ||
-    "Alex Rivera";
+    "Student";
+  const streak = 0;
 
+  const profileStats: StatCard[] = [
+    {
+      id: "sessions",
+      value: String(sessionsCompleted),
+      label: "Sessions",
+      icon: "checkmark-circle-outline",
+      iconColor: "#2563EB",
+      bgIconColor: "#EFF6FF",
+    },
+    {
+      id: "streak",
+      value: String(streak),
+      label: "Streak",
+      icon: "flame-outline",
+      iconColor: "#D97706",
+      bgIconColor: "#FEF3C7",
+    },
+    {
+      id: "rating",
+      value: ratingAverage ? ratingAverage.toFixed(1) : "0",
+      label: "Rating",
+      icon: "star-outline",
+      iconColor: "#D97706",
+      bgIconColor: "#FEF3C7",
+    },
+    {
+      id: "mentors",
+      value: String(mentorCount),
+      label: "Mentors",
+      icon: "school-outline",
+      iconColor: "#0D9488",
+      bgIconColor: "#CCFBF1",
+    },
+  ];
   const userAvatar =
     activeProfile?.avatar_url ||
     user?.user_metadata?.avatar_url ||
     "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
+
+  const onConfirmAddFunds = async () => {
+    const amount = Number.parseFloat(addFundsAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert("Error", "Enter a valid amount");
+      return;
+    }
+
+    setAddingFunds(true);
+    try {
+      const {
+        data: { user: currentUser },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      const activeUser = currentUser || user;
+      if (!activeUser) {
+        Alert.alert("Error", "Please sign in to add funds.");
+        return;
+      }
+
+      const newBalance = (profile?.wallet_balance ?? 0) + amount;
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ wallet_balance: newBalance })
+        .eq("id", activeUser.id);
+      if (updateError) {
+        Alert.alert("Error", updateError.message);
+        return;
+      }
+
+      const { error: insertError } = await supabase
+        .from("wallet_transactions")
+        .insert({
+          user_id: activeUser.id,
+          amount,
+          type: "deposit",
+          description: "Wallet top-up",
+        });
+      if (insertError) {
+        const { error: rollbackError } = await supabase
+          .from("profiles")
+          .update({ wallet_balance: profile?.wallet_balance ?? 0 })
+          .eq("id", activeUser.id);
+        if (rollbackError) {
+          console.error("Failed to roll back wallet balance:", rollbackError);
+        }
+        Alert.alert("Error", insertError.message);
+        return;
+      }
+
+      const { data, error: profileError } = await supabase
+        .from("profiles")
+        .select("full_name, email, education, avatar_url, wallet_balance")
+        .eq("id", activeUser.id)
+        .single();
+      if (profileError) throw profileError;
+      setProfile({
+        ...data,
+        wallet_balance: data.wallet_balance == null ? 0 : Number(data.wallet_balance),
+      });
+      setAddFundsModalVisible(false);
+      setAddFundsAmount("");
+      Alert.alert("Success", "Funds added successfully!");
+    } catch (error) {
+      console.error("Failed to add wallet funds:", error);
+      Alert.alert("Error", error instanceof Error ? error.message : "Unable to add funds.");
+    } finally {
+      setAddingFunds(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ActivityIndicator size="large" color="#2563EB" />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -206,23 +368,14 @@ export default function UserProfileScreen() {
                   style={{ marginLeft: 4 }}
                 />
               </View>
-              <Text style={styles.userTrack}>Grade 12 • AP & Honors Track</Text>
-              <Text style={styles.userJoined}>Joined Fall 2025</Text>
+              <Text style={styles.userTrack}>{profile?.education || "Education not provided"}</Text>
+              <Text style={styles.userJoined}>{activeProfile?.email || user?.email || ""}</Text>
             </View>
-          </View>
-
-          {/* Goal Banner */}
-          <View style={styles.targetBanner}>
-            <MaterialCommunityIcons name="target" size={16} color="#D97706" />
-            <Text style={styles.targetText}>
-              Target:{" "}
-              <Text style={styles.targetHighlight}>5 on AP Calc & Physics</Text>
-            </Text>
           </View>
 
           {/* Quick Stats Grid */}
           <View style={styles.statsGrid}>
-            {PROFILE_STATS.map((stat) => (
+            {profileStats.map((stat) => (
               <View key={stat.id} style={styles.statBox}>
                 <View
                   style={[
@@ -256,10 +409,6 @@ export default function UserProfileScreen() {
               </View>
             </View>
 
-            <View style={styles.autoReloadBadge}>
-              <View style={styles.greenDot} />
-              <Text style={styles.autoReloadText}>Auto-Reload On</Text>
-            </View>
           </View>
 
           {/* Balance Box */}
@@ -277,14 +426,16 @@ export default function UserProfileScreen() {
             </View>
 
             <View style={styles.balanceRow}>
-              <Text style={styles.balanceAmount}>$120.00</Text>
-              <Text style={styles.creditsText}>~2.0 hrs credits</Text>
+              <Text style={styles.balanceAmount}>${(profile?.wallet_balance ?? 0).toFixed(2)}</Text>
             </View>
           </View>
 
           {/* Wallet Actions */}
           <View style={styles.walletActions}>
-            <TouchableOpacity style={styles.addFundsBtn}>
+            <TouchableOpacity
+              style={styles.addFundsBtn}
+              onPress={() => setAddFundsModalVisible(true)}
+            >
               <Ionicons
                 name="add"
                 size={18}
@@ -322,7 +473,9 @@ export default function UserProfileScreen() {
 
           {/* Subject Pills */}
           <View style={styles.pillsWrap}>
-            {ACTIVE_SUBJECTS.map((subject) => (
+            {activeSubjects.length === 0 ? (
+              <Text style={styles.subjectPillText}>No active subjects</Text>
+            ) : activeSubjects.map((subject) => (
               <View
                 key={subject.id}
                 style={[
@@ -340,43 +493,7 @@ export default function UserProfileScreen() {
               </View>
             ))}
           </View>
-
-          {/* Target Universities Sub-section */}
-          <Text style={styles.subSectionTitle}>TARGET UNIVERSITIES</Text>
-          <View style={styles.pillsWrap}>
-            {TARGET_UNIVERSITIES.map((uni) => (
-              <View key={uni.id} style={styles.uniPill}>
-                <Ionicons
-                  name="school-outline"
-                  size={12}
-                  color="#2563EB"
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={styles.uniPillText}>{uni.name}</Text>
-              </View>
-            ))}
-          </View>
         </View>
-
-        {/* --- SAVED TUTORS BANNER --- */}
-        <TouchableOpacity style={styles.listRowCard}>
-          <View style={styles.listRowLeft}>
-            <View style={styles.headerIconBg}>
-              <Ionicons name="bookmark-outline" size={18} color="#2563EB" />
-            </View>
-            <View>
-              <Text style={styles.listRowTitle}>Saved Tutors & Favorites</Text>
-              <Text style={styles.listRowSubtitle}>5 vetted instructors</Text>
-            </View>
-          </View>
-
-          <View style={styles.listRowRight}>
-            <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>5</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
-          </View>
-        </TouchableOpacity>
 
         {/* --- SUPPORT & COMMUNITY CARD --- */}
         <View style={styles.card}>
@@ -443,6 +560,62 @@ export default function UserProfileScreen() {
           Empowering Student Success Everywhere
         </Text>
       </ScrollView>
+
+      <Modal
+        visible={addFundsModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAddFundsModalVisible(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            paddingHorizontal: 20,
+            backgroundColor: "rgba(15, 23, 42, 0.5)",
+          }}
+        >
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Add Funds to Wallet</Text>
+            <View
+              style={{
+                marginTop: 16,
+                marginBottom: 16,
+                backgroundColor: "#F3F4F6",
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                height: 48,
+                flexDirection: "row",
+                alignItems: "center",
+              }}
+            >
+              <TextInput
+                style={{ flex: 1, fontSize: 14, color: "#1E293B", fontWeight: "500" }}
+                value={addFundsAmount}
+                onChangeText={setAddFundsAmount}
+                keyboardType="numeric"
+                placeholder="Enter amount"
+                placeholderTextColor="#94A3B8"
+              />
+            </View>
+            <View style={styles.walletActions}>
+              <TouchableOpacity
+                style={styles.historyBtn}
+                onPress={() => setAddFundsModalVisible(false)}
+              >
+                <Text style={styles.historyText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.addFundsBtn}
+                onPress={onConfirmAddFunds}
+                disabled={addingFunds}
+              >
+                <Text style={styles.addFundsText}>{addingFunds ? "Adding..." : "Confirm"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* --- BOTTOM TAB BAR --- */}
       <View style={styles.tabBar}>
