@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../../lib/supabase';
 type BottomTab = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
 
 interface TutorProfile {
@@ -37,7 +38,7 @@ const STORAGE_KEY = '@tutormate_tutor_profile';
 
 export default function TutorProfileDetailsScreen() {
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { profile: authProfile, user, signOut } = useAuth();
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('profile');
 
   const [profile, setProfile] = useState<TutorProfile>({
@@ -51,19 +52,48 @@ export default function TutorProfileDetailsScreen() {
       'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80',
   });
 
-  // Load profile from AsyncStorage on mount
+  // Load profile from Supabase & AsyncStorage on mount
   useEffect(() => {
+    let isMounted = true;
     (async () => {
       try {
         const savedData = await AsyncStorage.getItem(STORAGE_KEY);
-        if (savedData) {
+        if (savedData && isMounted) {
           setProfile(JSON.parse(savedData));
         }
+
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        const activeUser = currentUser || user;
+        if (!activeUser) return;
+
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', activeUser.id)
+          .single();
+
+        if (isMounted && data) {
+          setProfile((prev) => ({
+            ...prev,
+            fullName: data.full_name || prev.fullName,
+            email: data.email || activeUser.email || prev.email,
+            avatarUrl: data.avatar_url || prev.avatarUrl,
+            degree: data.degree || data.bio || prev.degree,
+          }));
+        } else if (isMounted && activeUser) {
+          setProfile((prev) => ({
+            ...prev,
+            fullName: authProfile?.full_name || activeUser.user_metadata?.full_name || prev.fullName,
+            email: authProfile?.email || activeUser.email || prev.email,
+            avatarUrl: authProfile?.avatar_url || activeUser.user_metadata?.avatar_url || prev.avatarUrl,
+          }));
+        }
       } catch (error) {
-        console.warn('Failed to load profile from local storage', error);
+        console.warn('Failed to load profile from database/local storage', error);
       }
     })();
-  }, []);
+    return () => { isMounted = false; };
+  }, [user, authProfile]);
 
   const handleLogout = () => {
     router.replace('/welcome');

@@ -18,9 +18,9 @@ import {
     View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
-// In your full Supabase setup:
-// import { supabase } from '@/lib/supabase';
-// import { useRouter } from 'expo-router';
+import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../../lib/supabase';
+import { useRouter } from 'expo-router';
 
 type BottomTab = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
 
@@ -40,70 +40,216 @@ interface CalendarCell {
 const STORAGE_KEY = '@tutormate_schedule_availability_v1';
 
 export default function ManageScheduleScreen() {
+  const router = useRouter();
+  const { user } = useAuth();
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('calendar');
-  const [selectedDay, setSelectedDay] = useState<number>(12);
+  const [currentDate, setCurrentDate] = useState<Date>(new Date(2026, 2, 1)); // Default March 2026
+  const [selectedDay, setSelectedDay] = useState<number>(10);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [dbAvailability, setDbAvailability] = useState<Record<number, WindowSchedule>>({});
 
-  // Availability windows state for Thursday, Mar 12
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth(); // 0-indexed
+
+  const monthName = currentDate.toLocaleString('en-US', { month: 'long' });
+  const shortMonthName = currentDate.toLocaleString('en-US', { month: 'short' });
+  const monthYearTitle = `${monthName} ${year}`;
+
+  // Calculate correct day of week for selected day
+  const selectedFullDate = new Date(year, month, selectedDay);
+  const dayOfWeekName = selectedFullDate.toLocaleDateString('en-US', { weekday: 'long' });
+  const selectedDateHeaderTitle = `${dayOfWeekName}, ${shortMonthName} ${selectedDay}`;
+
+  // Check if selected date is in the past
+  const isPastDate = (() => {
+    const selectedDateObj = new Date(year, month, selectedDay, 23, 59, 59);
+    const now = new Date();
+    return selectedDateObj < now;
+  })();
+
+  // Availability windows state
   const [windows, setWindows] = useState<WindowSchedule>({
     morning: true,
     afternoon: true,
     evening: true,
   });
 
-  // Load saved schedule settings from AsyncStorage
+  const handlePrevMonth = () => {
+    const newDate = new Date(year, month - 1, 1);
+    const maxDays = new Date(newDate.getFullYear(), newDate.getMonth() + 1, 0).getDate();
+    setCurrentDate(newDate);
+    if (selectedDay > maxDays) {
+      setSelectedDay(maxDays);
+    }
+  };
+
+  const handleNextMonth = () => {
+    const newDate = new Date(year, month + 1, 1);
+    const maxDays = new Date(newDate.getFullYear(), newDate.getMonth() + 1, 0).getDate();
+    setCurrentDate(newDate);
+    if (selectedDay > maxDays) {
+      setSelectedDay(maxDays);
+    }
+  };
+
+  const getActiveTutorId = async (): Promise<string | null> => {
+    try {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser?.id) return currentUser.id;
+
+      if (user?.id) return user.id;
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('role', 'tutor')
+        .limit(1)
+        .maybeSingle();
+
+      if (profile?.id) return profile.id;
+
+      const { data: anyProf } = await supabase
+        .from('profiles')
+        .select('id')
+        .limit(1)
+        .maybeSingle();
+
+      return anyProf?.id || null;
+    } catch {
+      return user?.id || null;
+    }
+  };
+
+  // Fetch month availability schedule from Supabase & AsyncStorage
   useEffect(() => {
-    (async () => {
+    let isMounted = true;
+
+    async function loadSchedule() {
       try {
-        const stored = await AsyncStorage.getItem(STORAGE_KEY);
-        if (stored) {
+        const monthStr = String(month + 1).padStart(2, '0');
+        const daysInMonthCount = new Date(year, month + 1, 0).getDate();
+        const startDateStr = `${year}-${monthStr}-01`;
+        const endDateStr = `${year}-${monthStr}-${String(daysInMonthCount).padStart(2, '0')}`;
+
+        const tutorId = await getActiveTutorId();
+
+        if (tutorId) {
+          const { data, error } = await supabase
+            .from('tutor_availability')
+            .select('*')
+            .eq('tutor_id', tutorId)
+            .gte('date', startDateStr)
+            .lte('date', endDateStr);
+
+          if (!error && data && isMounted) {
+            const map: Record<number, WindowSchedule> = {};
+            data.forEach((row: any) => {
+              const dayNum = parseInt(row.date.split('-')[2], 10);
+              map[dayNum] = {
+                morning: row.morning_window,
+                afternoon: row.afternoon_window,
+                evening: row.evening_window,
+              };
+            });
+            setDbAvailability(map);
+            if (map[selectedDay]) {
+              setWindows(map[selectedDay]);
+            }
+          }
+        }
+
+        const storageKeyMonth = `${STORAGE_KEY}_${year}_${monthStr}`;
+        const stored = await AsyncStorage.getItem(storageKeyMonth);
+        if (stored && isMounted) {
           const parsed = JSON.parse(stored);
-          if (parsed[selectedDay]) {
+          if (parsed[selectedDay] && !dbAvailability[selectedDay]) {
             setWindows(parsed[selectedDay]);
           }
         }
       } catch (err) {
-        console.warn('Failed to load schedule from storage:', err);
+        console.warn('Failed to load schedule from database/storage:', err);
       }
-    })();
-  }, [selectedDay]);
+    }
+
+    loadSchedule();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentDate, selectedDay, user]);
 
   const activeBlocksCount = [windows.morning, windows.afternoon, windows.evening].filter(
     Boolean
   ).length;
 
   const handleSaveAvailability = async () => {
+    if (isPastDate) {
+      Alert.alert('Past Date', 'Availability settings cannot be changed for past dates.');
+      return;
+    }
+
     try {
       setIsSaving(true);
-      const existing = await AsyncStorage.getItem(STORAGE_KEY);
+      const monthStr = String(month + 1).padStart(2, '0');
+      const storageKeyMonth = `${STORAGE_KEY}_${year}_${monthStr}`;
+      const existing = await AsyncStorage.getItem(storageKeyMonth);
       const scheduleMap = existing ? JSON.parse(existing) : {};
       scheduleMap[selectedDay] = windows;
 
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(scheduleMap));
+      await AsyncStorage.setItem(storageKeyMonth, JSON.stringify(scheduleMap));
 
-      // Supabase integration example:
-      // const { data: { user } } = await supabase.auth.getUser();
-      // const { error } = await supabase.from('tutor_availability').upsert({
-      //   tutor_id: user?.id,
-      //   date: `2026-03-${selectedDay < 10 ? '0' + selectedDay : selectedDay}`,
-      //   morning_window: windows.morning,
-      //   afternoon_window: windows.afternoon,
-      //   evening_window: windows.evening,
-      //   timezone: 'America/Los_Angeles',
-      //   updated_at: new Date().toISOString(),
-      // });
-      // if (error) throw error;
+      const tutorId = await getActiveTutorId();
 
-      Alert.alert('Success', 'Availability schedule saved successfully!');
-    } catch (e) {
+      if (!tutorId) {
+        Alert.alert(
+          'Authentication Required',
+          'No tutor ID found. Please log in as a tutor to save your schedule to the database.'
+        );
+        return;
+      }
+
+      const dayStr = String(selectedDay).padStart(2, '0');
+      const formattedDate = `${year}-${monthStr}-${dayStr}`;
+
+      const { error } = await supabase.from('tutor_availability').upsert(
+        {
+          tutor_id: tutorId,
+          date: formattedDate,
+          morning_window: windows.morning,
+          afternoon_window: windows.afternoon,
+          evening_window: windows.evening,
+          timezone: 'America/Los_Angeles',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'tutor_id,date' }
+      );
+
+      if (error) {
+        console.error('Supabase availability save error:', error);
+        Alert.alert('Database Error', `Failed to save to Supabase: ${error.message}`);
+        return;
+      }
+
+      setDbAvailability((prev) => ({
+        ...prev,
+        [selectedDay]: windows,
+      }));
+
+      Alert.alert('Success', `Availability for ${monthName} ${selectedDay}, ${year} saved to database!`);
+    } catch (e: any) {
       console.error('Save error:', e);
-      Alert.alert('Error', 'Unable to save availability settings.');
+      Alert.alert('Error', e?.message || 'Unable to save availability settings.');
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleClearDay = () => {
+    if (isPastDate) {
+      Alert.alert('Past Date', 'Availability settings cannot be cleared for past dates.');
+      return;
+    }
+
     setWindows({
       morning: false,
       afternoon: false,
@@ -111,64 +257,121 @@ export default function ManageScheduleScreen() {
     });
   };
 
-  const handleCopyToAllThursdays = () => {
-    Alert.alert(
-      'Copy Schedule',
-      'Apply this exact availability to all Thursdays in March 2026?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Apply',
-          onPress: () =>
-            Alert.alert('Applied', 'Schedule copied to Mar 5, 12, 19, and 26.'),
-        },
-      ]
-    );
+  const handleCopyToAllMatchingDays = async () => {
+    if (isPastDate) {
+      Alert.alert('Past Date', 'Availability settings cannot be copied for past dates.');
+      return;
+    }
+
+    const targetDayOfWeek = selectedFullDate.getDay();
+    const daysInMonthCount = new Date(year, month + 1, 0).getDate();
+    const matchingDays: number[] = [];
+
+    for (let d = 1; d <= daysInMonthCount; d++) {
+      if (new Date(year, month, d).getDay() === targetDayOfWeek) {
+        matchingDays.push(d);
+      }
+    }
+
+    try {
+      setIsSaving(true);
+      const monthStr = String(month + 1).padStart(2, '0');
+      const tutorId = await getActiveTutorId();
+
+      if (!tutorId) {
+        Alert.alert('Authentication Required', 'No tutor ID found. Please log in as a tutor.');
+        return;
+      }
+
+      const rows = matchingDays.map((d) => ({
+        tutor_id: tutorId,
+        date: `${year}-${monthStr}-${String(d).padStart(2, '0')}`,
+        morning_window: windows.morning,
+        afternoon_window: windows.afternoon,
+        evening_window: windows.evening,
+        timezone: 'America/Los_Angeles',
+        updated_at: new Date().toISOString(),
+      }));
+
+      const { error } = await supabase
+        .from('tutor_availability')
+        .upsert(rows, { onConflict: 'tutor_id,date' });
+
+      if (error) {
+        Alert.alert('Database Error', `Failed to copy schedule: ${error.message}`);
+        return;
+      }
+
+      const mapUpdate = { ...dbAvailability };
+      matchingDays.forEach((d) => {
+        mapUpdate[d] = windows;
+      });
+      setDbAvailability(mapUpdate);
+
+      Alert.alert('Success', `Availability schedule copied to all ${dayOfWeekName}s in ${monthName} ${year}!`);
+    } catch (e: any) {
+      console.error('Copy error:', e);
+      Alert.alert('Error', e?.message || 'Schedule copy failed.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  // Calendar Grid data matching March 2026 exactly from screenshot
-  const calendarDays: CalendarCell[] = [
-    // Week 1
-    { day: 1, isCurrentMonth: true, status: 'available', dotsCount: 0 },
-    { day: 2, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 3, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 4, isCurrentMonth: true, status: 'available', dotsCount: 0 },
-    { day: 5, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 6, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 7, isCurrentMonth: true, status: 'available', dotsCount: 0 },
-    // Week 2
-    { day: 8, isCurrentMonth: true, status: 'available', dotsCount: 0 },
-    { day: 9, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 10, isCurrentMonth: true, status: 'today', dotsCount: 2 },
-    { day: 11, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 12, isCurrentMonth: true, status: 'selected', dotsCount: 3 },
-    { day: 13, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 14, isCurrentMonth: true, status: 'unavailable', dotsCount: 0 },
-    // Week 3
-    { day: 15, isCurrentMonth: true, status: 'unavailable', dotsCount: 0 },
-    { day: 16, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 17, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 18, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 19, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 20, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 21, isCurrentMonth: true, status: 'unavailable', dotsCount: 0 },
-    // Week 4
-    { day: 22, isCurrentMonth: true, status: 'unavailable', dotsCount: 0 },
-    { day: 23, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 24, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 25, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 26, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 27, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 28, isCurrentMonth: true, status: 'unavailable', dotsCount: 0 },
-    // Week 5
-    { day: 29, isCurrentMonth: true, status: 'unavailable', dotsCount: 0 },
-    { day: 30, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 31, isCurrentMonth: true, status: 'available', dotsCount: 1 },
-    { day: 1, isCurrentMonth: false, status: 'unavailable', dotsCount: 0 },
-    { day: 2, isCurrentMonth: false, status: 'unavailable', dotsCount: 0 },
-    { day: 3, isCurrentMonth: false, status: 'unavailable', dotsCount: 0 },
-    { day: 4, isCurrentMonth: false, status: 'unavailable', dotsCount: 0 },
-  ];
+  // Dynamic Calendar Grid data
+  const calendarDays: CalendarCell[] = (() => {
+    const firstDayIndex = new Date(year, month, 1).getDay(); // 0 = Sun
+    const daysInMonthCount = new Date(year, month + 1, 0).getDate();
+    const daysInPrevMonthCount = new Date(year, month, 0).getDate();
+    const today = new Date();
+
+    const cells: CalendarCell[] = [];
+
+    // Previous Month padding
+    for (let i = firstDayIndex - 1; i >= 0; i--) {
+      cells.push({
+        day: daysInPrevMonthCount - i,
+        isCurrentMonth: false,
+        status: 'unavailable',
+        dotsCount: 0,
+      });
+    }
+
+    // Current Month days
+    for (let d = 1; d <= daysInMonthCount; d++) {
+      const isToday =
+        today.getFullYear() === year &&
+        today.getMonth() === month &&
+        today.getDate() === d;
+
+      const avail = dbAvailability[d];
+      const dots = avail
+        ? [avail.morning, avail.afternoon, avail.evening].filter(Boolean).length
+        : 0;
+
+      const statusVal: CalendarCell['status'] =
+        d === selectedDay ? 'selected' : isToday ? 'today' : dots > 0 ? 'available' : 'unavailable';
+
+      cells.push({
+        day: d,
+        isCurrentMonth: true,
+        status: statusVal,
+        dotsCount: dots,
+      });
+    }
+
+    // Next Month padding
+    const remainingCells = (7 - (cells.length % 7)) % 7;
+    for (let i = 1; i <= remainingCells; i++) {
+      cells.push({
+        day: i,
+        isCurrentMonth: false,
+        status: 'unavailable',
+        dotsCount: 0,
+      });
+    }
+
+    return cells;
+  })();
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -213,20 +416,20 @@ export default function ManageScheduleScreen() {
             <TouchableOpacity
               activeOpacity={0.7}
               style={styles.navArrowBtn}
-              onPress={() => Alert.alert('Previous Month', 'Feb 2026')}
+              onPress={handlePrevMonth}
             >
               <Ionicons name="chevron-back" size={18} color="#334155" />
             </TouchableOpacity>
 
             <TouchableOpacity activeOpacity={0.7} style={styles.monthSelectorBtn}>
-              <Text style={styles.monthTitleText}>March 2026</Text>
+              <Text style={styles.monthTitleText}>{monthYearTitle}</Text>
               <Ionicons name="chevron-down" size={15} color="#334155" />
             </TouchableOpacity>
 
             <TouchableOpacity
               activeOpacity={0.7}
               style={styles.navArrowBtn}
-              onPress={() => Alert.alert('Next Month', 'April 2026')}
+              onPress={handleNextMonth}
             >
               <Ionicons name="chevron-forward" size={18} color="#334155" />
             </TouchableOpacity>
@@ -320,11 +523,20 @@ export default function ManageScheduleScreen() {
 
         {/* --- Day Detail & Tutoring Windows Card --- */}
         <View style={styles.detailCard}>
+          {isPastDate && (
+            <View style={styles.pastDateBanner}>
+              <Ionicons name="lock-closed" size={15} color="#B45309" />
+              <Text style={styles.pastDateText}>
+                Past Date — Read Only (Availability Locked)
+              </Text>
+            </View>
+          )}
+
           {/* Day Title & Open Blocks badge */}
           <View style={styles.detailTitleRow}>
             <View>
               <Text style={styles.detailDayTitle}>
-                Thursday, Mar {selectedDay}
+                {selectedDateHeaderTitle}
               </Text>
               <Text style={styles.detailSubtext}>
                 Set tutoring windows open for bookings
@@ -349,6 +561,7 @@ export default function ManageScheduleScreen() {
             </View>
 
             <Switch
+              disabled={isPastDate}
               value={windows.morning}
               onValueChange={(val) => setWindows({ ...windows, morning: val })}
               trackColor={{ false: '#E2E8F0', true: '#2563EB' }}
@@ -370,6 +583,7 @@ export default function ManageScheduleScreen() {
             </View>
 
             <Switch
+              disabled={isPastDate}
               value={windows.afternoon}
               onValueChange={(val) => setWindows({ ...windows, afternoon: val })}
               trackColor={{ false: '#E2E8F0', true: '#2563EB' }}
@@ -391,6 +605,7 @@ export default function ManageScheduleScreen() {
             </View>
 
             <Switch
+              disabled={isPastDate}
               value={windows.evening}
               onValueChange={(val) => setWindows({ ...windows, evening: val })}
               trackColor={{ false: '#E2E8F0', true: '#2563EB' }}
@@ -399,22 +614,24 @@ export default function ManageScheduleScreen() {
             />
           </View>
 
-          {/* Action Row: Copy to all Thursdays & Clear Day */}
+          {/* Action Row: Copy to all matching weekdays & Clear Day */}
           <View style={styles.scheduleActionsRow}>
             <TouchableOpacity
               activeOpacity={0.8}
-              style={styles.copyBtn}
-              onPress={handleCopyToAllThursdays}
+              style={[styles.copyBtn, isPastDate && styles.disabledActionBtn]}
+              onPress={handleCopyToAllMatchingDays}
+              disabled={isPastDate || isSaving}
             >
-              <Text style={styles.copyBtnText}>Copy to all Thursdays</Text>
+              <Text style={[styles.copyBtnText, isPastDate && styles.disabledActionText]}>Copy to all {dayOfWeekName}s</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               activeOpacity={0.8}
-              style={styles.clearBtn}
+              style={[styles.clearBtn, isPastDate && styles.disabledActionBtn]}
               onPress={handleClearDay}
+              disabled={isPastDate || isSaving}
             >
-              <Text style={styles.clearBtnText}>Clear Day</Text>
+              <Text style={[styles.clearBtnText, isPastDate && styles.disabledActionText]}>Clear Day</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -439,13 +656,13 @@ export default function ManageScheduleScreen() {
         {/* --- Save Availability Primary Button --- */}
         <TouchableOpacity
           activeOpacity={0.85}
-          style={styles.saveAvailabilityBtn}
+          style={[styles.saveAvailabilityBtn, isPastDate && styles.saveBtnDisabled]}
           onPress={handleSaveAvailability}
-          disabled={isSaving}
+          disabled={isSaving || isPastDate}
         >
-          <Ionicons name="checkmark-circle-outline" size={20} color="#FFFFFF" />
+          <Ionicons name={isPastDate ? "lock-closed-outline" : "checkmark-circle-outline"} size={20} color="#FFFFFF" />
           <Text style={styles.saveAvailabilityBtnText}>
-            {isSaving ? 'Saving Schedule...' : 'Save Availability'}
+            {isPastDate ? "Past Date (Locked)" : isSaving ? "Saving Schedule..." : "Save Availability"}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -996,5 +1213,35 @@ const styles = StyleSheet.create({
   navLabelActive: {
     color: '#2563EB',
     fontWeight: '700',
+  },
+  pastDateBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+  },
+  pastDateText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  disabledActionBtn: {
+    opacity: 0.45,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F1F5F9',
+  },
+  disabledActionText: {
+    color: '#94A3B8',
+  },
+  saveBtnDisabled: {
+    backgroundColor: '#94A3B8',
+    elevation: 0,
+    shadowOpacity: 0,
   },
 });

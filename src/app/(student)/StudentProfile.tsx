@@ -1,7 +1,8 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useState } from "react";
-import { useAuth } from "../../context/AuthContext";
+import { useEffect, useState } from "react";
+import { useAuth, UserProfile } from "../../context/AuthContext";
+import { supabase } from "../../../lib/supabase";
 import {
     Image,
     Platform,
@@ -82,8 +83,52 @@ const TARGET_UNIVERSITIES = [
 
 export default function UserProfileScreen() {
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { profile, user, signOut } = useAuth();
+  const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState("Profile");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadStudentData() {
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        const activeUser = currentUser || user;
+        if (!activeUser) return;
+
+        const { data } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", activeUser.id)
+          .single();
+
+        if (isMounted && data) {
+          setFetchedProfile(data as UserProfile);
+        }
+      } catch (err) {
+        console.warn("Error fetching student profile:", err);
+      }
+    }
+
+    loadStudentData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
+
+  const activeProfile = fetchedProfile || profile;
+
+  const userName =
+    activeProfile?.full_name ||
+    user?.user_metadata?.full_name ||
+    (user?.email ? user.email.split("@")[0] : null) ||
+    "Alex Rivera";
+
+  const userAvatar =
+    activeProfile?.avatar_url ||
+    user?.user_metadata?.avatar_url ||
+    "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
 
   return (
     <SafeAreaView style={styles.container}>
@@ -117,7 +162,13 @@ export default function UserProfileScreen() {
         <View style={styles.pageHeader}>
           <TouchableOpacity
             style={styles.iconBtn}
-            onPress={() => router.back()}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.push("/(student)/dashboard");
+              }
+            }}
           >
             <Ionicons name="arrow-back" size={20} color="#1E293B" />
           </TouchableOpacity>
@@ -136,7 +187,7 @@ export default function UserProfileScreen() {
             <View style={styles.avatarWrapper}>
               <Image
                 source={{
-                  uri: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+                  uri: userAvatar,
                 }}
                 style={styles.avatar}
               />
@@ -147,7 +198,7 @@ export default function UserProfileScreen() {
 
             <View style={styles.profileInfo}>
               <View style={styles.nameRow}>
-                <Text style={styles.userName}>Alex Rivera</Text>
+                <Text style={styles.userName}>{userName}</Text>
                 <Ionicons
                   name="checkmark-circle"
                   size={18}

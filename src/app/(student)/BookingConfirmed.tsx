@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   Image,
   Platform,
@@ -12,19 +12,37 @@ import {
   View,
 } from "react-native";
 
-// --- MOCK DATA ---
-const BOOKING_REF = "TM-89420-BC";
-const TUTOR_NAME = "Dr. Sarah Jenkins";
-const TUTOR_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
-const SUBJECT = "AP Calculus BC";
-const SESSION_TIME = "3:30 PM – 4:30 PM EDT";
-const SESSION_DATE = { day: "16", month: "MAR" };
-const SESSION_FOCUS = "Taylor series convergence tests & FRQ practice";
-const PAYMENT_TOTAL = "$45.00";
-const WALLET_BALANCE = "$75.00";
-
 export default function BookingConfirmedScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    bookingRef?: string;
+    tutorName?: string;
+    tutorAvatar?: string;
+    subject?: string;
+    timeSlot?: string;
+    dateKey?: string;
+    price?: string;
+    focusText?: string;
+  }>();
+
+  const bookingRef = params.bookingRef || "TM-89420-BC";
+  const tutorName = params.tutorName || "Dr. Sarah Jenkins";
+  const tutorAvatar = params.tutorAvatar || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
+  const subject = params.subject || "AP Calculus BC";
+  const timeSlot = params.timeSlot || "3:30 PM – 4:30 PM EDT";
+  const focusNotes = params.focusText || "Taylor series convergence tests & FRQ practice";
+  const paymentTotal = params.price ? `$${params.price}.00` : "$45.00";
+
+  let dateMonth = "MAR";
+  let dateNum = "16";
+  if (params.dateKey) {
+    const parts = params.dateKey.split("-");
+    if (parts.length === 3) {
+      const dObj = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      dateMonth = dObj.toLocaleDateString("en-US", { month: "short" }).toUpperCase();
+      dateNum = String(dObj.getDate());
+    }
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -75,7 +93,7 @@ export default function BookingConfirmedScreen() {
           </View>
 
           <View style={styles.refRow}>
-            <Text style={styles.refText}>Ref #: {BOOKING_REF}</Text>
+            <Text style={styles.refText}>Ref #: {bookingRef}</Text>
             <TouchableOpacity style={{ marginLeft: 6 }}>
               <Ionicons name="copy-outline" size={14} color="#64748B" />
             </TouchableOpacity>
@@ -83,7 +101,7 @@ export default function BookingConfirmedScreen() {
 
           <Text style={styles.heroTitle}>Booking Confirmed!</Text>
           <Text style={styles.heroSubtitle}>
-            You&apos;re all set for mastery with Dr. Marcus Vance.
+            You&apos;re all set for mastery with {tutorName}.
           </Text>
         </View>
 
@@ -92,16 +110,16 @@ export default function BookingConfirmedScreen() {
           <View style={styles.cardAccent} />
           <View style={styles.detailsMain}>
             <View style={styles.dateBox}>
-              <Text style={styles.dateMonth}>{SESSION_DATE.month}</Text>
-              <Text style={styles.dateNum}>{SESSION_DATE.day}</Text>
+              <Text style={styles.dateMonth}>{dateMonth}</Text>
+              <Text style={styles.dateNum}>{dateNum}</Text>
             </View>
             <View style={styles.detailsInfo}>
               <View style={styles.timeRow}>
                 <Ionicons name="time-outline" size={14} color="#0F172A" style={{ marginRight: 6 }} />
-                <Text style={styles.timeText}>{SESSION_TIME}</Text>
+                <Text style={styles.timeText}>{timeSlot}</Text>
               </View>
-              <Text style={styles.subjectText}>{SUBJECT}</Text>
-              <Text style={styles.focusText}>{SESSION_FOCUS}</Text>
+              <Text style={styles.subjectText}>{subject}</Text>
+              <Text style={styles.focusText}>{focusNotes}</Text>
             </View>
           </View>
           
@@ -109,12 +127,12 @@ export default function BookingConfirmedScreen() {
           
           <View style={styles.tutorRow}>
             <View style={styles.avatarWrapper}>
-              <Image source={{ uri: TUTOR_AVATAR }} style={styles.tutorAvatar} />
+              <Image source={{ uri: tutorAvatar }} style={styles.tutorAvatar} />
               <View style={styles.onlineBadge} />
             </View>
             <View style={styles.tutorInfo}>
               <View style={styles.nameRow}>
-                <Text style={styles.tutorName}>{TUTOR_NAME}</Text>
+                <Text style={styles.tutorName}>{tutorName}</Text>
                 <Ionicons name="checkmark-circle" size={14} color="#2563EB" style={{ marginLeft: 4 }} />
               </View>
               <View style={styles.statusRow}>
@@ -147,8 +165,8 @@ export default function BookingConfirmedScreen() {
           <View style={styles.divider} />
 
           <View style={styles.paymentRow}>
-            <Text style={styles.paymentLabel}>1 Hr {SUBJECT} Tutoring</Text>
-            <Text style={styles.paymentValue}>{PAYMENT_TOTAL}</Text>
+            <Text style={styles.paymentLabel}>1 Hr {subject} Tutoring</Text>
+            <Text style={styles.paymentValue}>{paymentTotal}</Text>
           </View>
           
           <View style={styles.paymentRow}>
@@ -163,7 +181,7 @@ export default function BookingConfirmedScreen() {
               <Ionicons name="wallet-outline" size={14} color="#64748B" style={{ marginRight: 6 }} />
               <Text style={styles.paymentLabel}>Paid via Student Learning Wallet</Text>
             </View>
-            <Text style={styles.paymentValue}>-{PAYMENT_TOTAL}</Text>
+            <Text style={styles.paymentValue}>-{paymentTotal}</Text>
           </View>
 
           <View style={styles.divider} />
@@ -173,7 +191,7 @@ export default function BookingConfirmedScreen() {
               <Ionicons name="checkmark-circle" size={18} color="#10B981" style={{ marginRight: 8 }} />
               <Text style={styles.remainingLabel}>Remaining Wallet Balance</Text>
             </View>
-            <Text style={styles.remainingValue}>{WALLET_BALANCE}</Text>
+            <Text style={styles.remainingValue}>$75.00</Text>
           </View>
         </View>
 

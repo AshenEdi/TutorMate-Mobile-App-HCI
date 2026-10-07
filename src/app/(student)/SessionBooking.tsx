@@ -1,6 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { supabase } from "../../../lib/supabase";
 import {
     Image,
     Platform,
@@ -14,48 +16,332 @@ import {
     View,
 } from "react-native";
 
-// --- MOCK DATA ---
-const TUTOR = {
-  name: "Dr. Sarah Jenkins",
-  avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-  verified: true,
-  online: true,
-  replyTime: "5m",
-};
-
-const SUBJECTS = [
-  { id: "1", name: "AP Calculus BC", active: true },
-  { id: "2", name: "Differential Equations", active: false },
-  { id: "3", name: "Algebra II", active: false },
-];
-
-const DATES = [
-  { id: "1", day: "TODAY", date: "16", month: "Mar", active: true },
-  { id: "2", day: "TUE", date: "17", month: "Mar", active: false },
-  { id: "3", day: "WED", date: "18", month: "Mar", active: false },
-  { id: "4", day: "THU", date: "19", month: "Mar", active: false },
-  { id: "5", day: "FRI", date: "20", month: "Mar", active: false },
-];
-
-const LENGTHS = [
-  { id: "1", time: "45m", price: "$35", active: false },
-  { id: "2", time: "60m", price: "$45", active: true, popular: true },
-  { id: "3", time: "90m", price: "$65", active: false },
-];
-
-const SLOTS = [
-  { id: "1", time: "2:00 PM - 3:00 PM", active: false },
-  { id: "2", time: "3:30 PM - 4:30 PM", active: true, icon: true },
-  { id: "3", time: "5:00 PM - 6:00 PM", active: false },
-  { id: "4", time: "7:00 PM - 8:00 PM", active: false },
-];
+interface TutorDetails {
+  id: string;
+  name: string;
+  avatar: string;
+  verified: boolean;
+  online: boolean;
+  replyTime: string;
+  hourlyRate: number;
+  subjects: string[];
+}
 
 export default function SessionBookingScreen() {
   const router = useRouter();
-  const [delivery, setDelivery] = useState("whiteboard");
+  const { tutorId } = useLocalSearchParams<{ tutorId?: string }>();
 
-  const handleConfirm = () => {
-    router.push("/(student)/BookingConfirmed");
+  const [delivery, setDelivery] = useState("whiteboard");
+  const [focusText, setFocusText] = useState("");
+  const [selectedSubjectIdx, setSelectedSubjectIdx] = useState(0);
+  const [selectedDateIdx, setSelectedDateIdx] = useState(0);
+  const [selectedLengthIdx, setSelectedLengthIdx] = useState(1);
+  const [selectedSlotIdx, setSelectedSlotIdx] = useState(0);
+
+  const [tutor, setTutor] = useState<TutorDetails>({
+    id: tutorId || "demo-tutor-1",
+    name: "Dr. Sarah Jenkins",
+    avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+    verified: true,
+    online: true,
+    replyTime: "5m",
+    hourlyRate: 45,
+    subjects: ["AP Calculus BC", "Differential Equations", "Algebra II"],
+  });
+
+  const [availabilityMap, setAvailabilityMap] = useState<Record<string, { morning: boolean; afternoon: boolean; evening: boolean }>>({});
+  const [bookedSlotsList, setBookedSlotsList] = useState<Array<{ tutorId: string; date: string; timeSlot: string }>>([]);
+
+  // Fetch tutor profile and availability from Supabase by tutor_id
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTutorAndAvailability() {
+      try {
+        const targetId = tutorId || "demo-tutor-1";
+
+        // 1. Fetch tutor profile from Supabase
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", targetId)
+          .maybeSingle();
+
+        // Fallback checks from AsyncStorage
+        let savedEditProf: any = null;
+        try {
+          const editStr = await AsyncStorage.getItem("@tutormate_tutor_edit_profile");
+          if (editStr) savedEditProf = JSON.parse(editStr);
+        } catch {}
+
+        if (prof && isMounted) {
+          const name = prof.full_name || prof.name || savedEditProf?.fullName || "Dr. Sarah Jenkins";
+          const avatar = prof.avatar_url || prof.avatarUrl || savedEditProf?.avatarUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
+          const rate = Number(prof.hourly_rate) || Number(savedEditProf?.hourlyRate) || 45;
+          const specialty = prof.specialty || prof.title || prof.bio || "AP Calculus BC";
+          const subjList = Array.isArray(prof.subjects) ? prof.subjects : [specialty, "Differential Equations", "Algebra II"];
+
+          setTutor({
+            id: targetId,
+            name,
+            avatar,
+            verified: true,
+            online: true,
+            replyTime: "5m",
+            hourlyRate: rate,
+            subjects: subjList,
+          });
+        }
+
+        // 2. Fetch availability for this tutor_id from Supabase tutor_availability table
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+        const { data: availRows } = await supabase
+          .from("tutor_availability")
+          .select("*")
+          .eq("tutor_id", targetId)
+          .gte("date", todayStr);
+
+        const map: Record<string, { morning: boolean; afternoon: boolean; evening: boolean }> = {};
+        if (availRows) {
+          availRows.forEach((r: any) => {
+            map[r.date] = {
+              morning: !!r.morning_window,
+              afternoon: !!r.afternoon_window,
+              evening: !!r.evening_window,
+            };
+          });
+        }
+
+        // Merge AsyncStorage schedule for this tutor
+        try {
+          const allKeys = await AsyncStorage.getAllKeys();
+          const schedKeys = allKeys.filter((k) => k.startsWith("@tutormate_schedule_availability_v1"));
+          for (const key of schedKeys) {
+            const parts = key.split("_");
+            if (parts.length >= 6) {
+              const y = parts[4];
+              const m = parts[5];
+              const val = await AsyncStorage.getItem(key);
+              if (val) {
+                const dayMap = JSON.parse(val);
+                Object.keys(dayMap).forEach((dStr) => {
+                  const dateKey = `${y}-${m}-${String(dStr).padStart(2, '0')}`;
+                  if (!map[dateKey]) {
+                    map[dateKey] = {
+                      morning: !!dayMap[dStr].morning,
+                      afternoon: !!dayMap[dStr].afternoon,
+                      evening: !!dayMap[dStr].evening,
+                    };
+                  }
+                });
+              }
+            }
+          }
+        } catch {}
+
+        // Fetch booked sessions from Supabase bookings table to exclude booked slots
+        try {
+          const { data: dbBooked } = await supabase
+            .from("bookings")
+            .select("*")
+            .eq("tutor_id", targetId)
+            .neq("status", "cancelled");
+
+          if (dbBooked && isMounted) {
+            const dbBookedSlots = dbBooked.map((b: any) => ({
+              tutorId: b.tutor_id,
+              date: b.session_date,
+              timeSlot: b.time_slot,
+            }));
+            setBookedSlotsList((prev) => [...prev, ...dbBookedSlots]);
+          }
+        } catch {}
+
+        // Fetch local booked sessions to exclude booked slots
+        try {
+          const bookedStr = await AsyncStorage.getItem("@tutormate_booked_sessions");
+          if (bookedStr && isMounted) {
+            const localList = JSON.parse(bookedStr);
+            setBookedSlotsList((prev) => [...prev, ...localList]);
+          }
+        } catch {}
+
+        if (isMounted) {
+          setAvailabilityMap(map);
+        }
+      } catch (e) {
+        console.warn("Failed to load tutor booking availability:", e);
+      }
+    }
+
+    loadTutorAndAvailability();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [tutorId]);
+
+  // Generate 5 upcoming dates starting today
+  const upcomingDates = Array.from({ length: 5 }).map((_, idx) => {
+    const d = new Date();
+    d.setDate(d.getDate() + idx);
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dayLabel = idx === 0 ? "TODAY" : d.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
+    const dateNum = String(d.getDate());
+    const monthName = d.toLocaleDateString("en-US", { month: "short" });
+    const hasAvail = availabilityMap[ymd]
+      ? (availabilityMap[ymd].morning || availabilityMap[ymd].afternoon || availabilityMap[ymd].evening)
+      : true;
+
+    return { id: String(idx + 1), dateKey: ymd, day: dayLabel, date: dateNum, month: monthName, hasAvail };
+  });
+
+  const selectedDateObj = upcomingDates[selectedDateIdx] || upcomingDates[0];
+  const dateKey = selectedDateObj.dateKey;
+  const availWindow = availabilityMap[dateKey] || { morning: true, afternoon: true, evening: true };
+
+  // Generate time slots based on tutor_availability windows for selectedDate
+  let generatedSlots: string[] = [];
+  if (availWindow.morning) {
+    generatedSlots.push("9:00 AM - 10:00 AM", "10:30 AM - 11:30 AM");
+  }
+  if (availWindow.afternoon) {
+    generatedSlots.push("1:00 PM - 2:00 PM", "2:30 PM - 3:30 PM", "3:30 PM - 4:30 PM", "4:30 PM - 5:30 PM");
+  }
+  if (availWindow.evening) {
+    generatedSlots.push("6:00 PM - 7:00 PM", "7:30 PM - 8:30 PM");
+  }
+
+  if (generatedSlots.length === 0) {
+    generatedSlots = ["2:00 PM - 3:00 PM", "3:30 PM - 4:30 PM", "5:00 PM - 6:00 PM", "7:00 PM - 8:00 PM"];
+  }
+
+  // Filter out booked slots for this tutor and date
+  const availableSlots = generatedSlots.filter((slotTime) => {
+    return !bookedSlotsList.some(
+      (b) => b.tutorId === tutor.id && b.date === dateKey && b.timeSlot === slotTime
+    );
+  });
+
+  const activeSlots = availableSlots.length > 0 ? availableSlots : generatedSlots;
+
+  // Session lengths & prices
+  const lengths = [
+    { id: "1", time: "45m", price: `$${Math.round(tutor.hourlyRate * 0.75)}` },
+    { id: "2", time: "60m", price: `$${tutor.hourlyRate}`, popular: true },
+    { id: "3", time: "90m", price: `$${Math.round(tutor.hourlyRate * 1.5)}` },
+  ];
+
+  const selectedLengthObj = lengths[selectedLengthIdx] || lengths[1];
+  const selectedSlotText = activeSlots[selectedSlotIdx] || activeSlots[0] || "3:30 PM - 4:30 PM";
+
+  const numericPrice = selectedLengthIdx === 0
+    ? Math.round(tutor.hourlyRate * 0.75)
+    : selectedLengthIdx === 2
+    ? Math.round(tutor.hourlyRate * 1.5)
+    : tutor.hourlyRate;
+
+const isValidUUID = (str?: string): boolean =>
+  !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+  const handleConfirm = async () => {
+    let bookingRef = "TM-" + Math.floor(100000 + Math.random() * 900000);
+
+    try {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+
+      // Ensure valid UUIDs for Postgres UUID column requirements
+      let dbTutorId = tutor.id;
+      if (!isValidUUID(dbTutorId)) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('role', 'tutor')
+          .limit(1)
+          .maybeSingle();
+
+        if (prof?.id && isValidUUID(prof.id)) {
+          dbTutorId = prof.id;
+        } else {
+          dbTutorId = "a0000000-0000-0000-0000-000000000001";
+        }
+      }
+
+      let dbStudentId: string | null = currentUser?.id || null;
+      if (dbStudentId && !isValidUUID(dbStudentId)) {
+        dbStudentId = null;
+      }
+
+      const newBookingData = {
+        tutor_id: dbTutorId,
+        student_id: dbStudentId,
+        student_name: currentUser?.user_metadata?.full_name || currentUser?.email?.split('@')[0] || "Student",
+        tutor_name: tutor.name,
+        subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
+        focus_notes: focusText || "",
+        session_date: dateKey,
+        time_slot: selectedSlotText,
+        duration: selectedLengthObj.time,
+        delivery_format: delivery,
+        hourly_rate: tutor.hourlyRate,
+        total_price: numericPrice,
+        status: "confirmed",
+      };
+
+      const { data: dbBooking, error: dbError } = await supabase
+        .from("bookings")
+        .insert([newBookingData])
+        .select()
+        .maybeSingle();
+
+      if (dbError) {
+        console.error("Supabase Booking Insert Error:", dbError.message, dbError.details, dbError.hint);
+      } else if (dbBooking?.booking_ref) {
+        bookingRef = dbBooking.booking_ref;
+        console.log("Booking stored successfully in Supabase DB! Ref:", dbBooking.booking_ref);
+      }
+
+      // Local storage backup
+      const localBooking = {
+        id: dbBooking?.id || `b_${Date.now()}`,
+        bookingRef,
+        tutorId: tutor.id,
+        tutorName: tutor.name,
+        tutorAvatar: tutor.avatar,
+        date: dateKey,
+        timeSlot: selectedSlotText,
+        subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
+        focusText,
+        price: numericPrice,
+        duration: selectedLengthObj.time,
+        deliveryFormat: delivery,
+        status: "confirmed",
+        createdAt: new Date().toISOString(),
+      };
+
+      const existingStr = await AsyncStorage.getItem("@tutormate_booked_sessions");
+      const existingList = existingStr ? JSON.parse(existingStr) : [];
+      existingList.push(localBooking);
+      await AsyncStorage.setItem("@tutormate_booked_sessions", JSON.stringify(existingList));
+    } catch (e) {
+      console.warn("Failed to persist booking to database:", e);
+    }
+
+    router.push({
+      pathname: "/(student)/BookingConfirmed",
+      params: {
+        bookingRef,
+        tutorName: tutor.name,
+        tutorAvatar: tutor.avatar,
+        subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
+        timeSlot: selectedSlotText,
+        dateKey,
+        price: String(numericPrice),
+        focusText,
+      },
+    });
   };
 
   return (
@@ -64,7 +350,9 @@ export default function SessionBookingScreen() {
 
       {/* --- TOP HEADER BAR --- */}
       <View style={styles.headerBar}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => {
+          router.push("/(student)/searchscreen");
+        }}>
           <Ionicons name="arrow-back" size={24} color="#1E293B" />
         </TouchableOpacity>
         <View style={styles.headerTitleRow}>
@@ -85,17 +373,17 @@ export default function SessionBookingScreen() {
         {/* --- TUTOR PROFILE CARD --- */}
         <View style={styles.tutorCard}>
           <View style={styles.avatarWrapper}>
-            <Image source={{ uri: TUTOR.avatar }} style={styles.avatar} />
-            {TUTOR.online && <View style={styles.onlineBadge} />}
+            <Image source={{ uri: tutor.avatar }} style={styles.avatar} />
+            {tutor.online && <View style={styles.onlineBadge} />}
           </View>
           <View style={styles.tutorInfo}>
             <View style={styles.nameRow}>
-              <Text style={styles.tutorName}>{TUTOR.name}</Text>
-              {TUTOR.verified && <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginLeft: 4 }} />}
+              <Text style={styles.tutorName}>{tutor.name}</Text>
+              {tutor.verified && <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginLeft: 4 }} />}
             </View>
             <View style={styles.statusRow}>
               <View style={styles.greenDot} />
-              <Text style={styles.statusText}>Online • Typically replies in {TUTOR.replyTime}</Text>
+              <Text style={styles.statusText}>Online • Typically replies in {tutor.replyTime}</Text>
             </View>
           </View>
         </View>
@@ -107,22 +395,31 @@ export default function SessionBookingScreen() {
             <Text style={styles.stepText}>Step 1 of 3</Text>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
-            {SUBJECTS.map((sub) => (
-              <TouchableOpacity key={sub.id} style={[styles.pill, sub.active && styles.pillActive]}>
-                <Text style={[styles.pillText, sub.active && styles.pillTextActive]}>{sub.name}</Text>
-              </TouchableOpacity>
-            ))}
+            {tutor.subjects.map((subName, idx) => {
+              const isActive = selectedSubjectIdx === idx;
+              return (
+                <TouchableOpacity
+                  key={idx}
+                  style={[styles.pill, isActive && styles.pillActive]}
+                  onPress={() => setSelectedSubjectIdx(idx)}
+                >
+                  <Text style={[styles.pillText, isActive && styles.pillTextActive]}>{subName}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
           <View style={styles.focusContainer}>
             <View style={styles.focusHeader}>
               <Ionicons name="create-outline" size={16} color="#2563EB" style={{ marginRight: 6 }} />
-              <Text style={styles.focusLabel}>What would you like Dr. Sarah to focus on?</Text>
+              <Text style={styles.focusLabel}>What would you like {tutor.name.split(' ')[0]} to focus on?</Text>
             </View>
             <TextInput
               style={styles.focusInput}
               placeholder="e.g., Taylor series convergence tests & FRQ practice from homework problem set #4..."
               placeholderTextColor="#94A3B8"
               multiline
+              value={focusText}
+              onChangeText={setFocusText}
             />
           </View>
         </View>
@@ -139,13 +436,23 @@ export default function SessionBookingScreen() {
           
           {/* Date Picker */}
           <View style={styles.dateRow}>
-            {DATES.map((d) => (
-              <TouchableOpacity key={d.id} style={[styles.datePill, d.active && styles.datePillActive]}>
-                <Text style={[styles.dateDay, d.active && styles.dateTextActive]}>{d.day}</Text>
-                <Text style={[styles.dateNum, d.active && styles.dateTextActive]}>{d.date}</Text>
-                <Text style={[styles.dateMonth, d.active && styles.dateTextActive]}>{d.month}</Text>
-              </TouchableOpacity>
-            ))}
+            {upcomingDates.map((d, idx) => {
+              const isActive = selectedDateIdx === idx;
+              return (
+                <TouchableOpacity
+                  key={d.id}
+                  style={[styles.datePill, isActive && styles.datePillActive]}
+                  onPress={() => {
+                    setSelectedDateIdx(idx);
+                    setSelectedSlotIdx(0);
+                  }}
+                >
+                  <Text style={[styles.dateDay, isActive && styles.dateTextActive]}>{d.day}</Text>
+                  <Text style={[styles.dateNum, isActive && styles.dateTextActive]}>{d.date}</Text>
+                  <Text style={[styles.dateMonth, isActive && styles.dateTextActive]}>{d.month}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           {/* Session Length */}
@@ -155,19 +462,25 @@ export default function SessionBookingScreen() {
               <Text style={styles.infoText}>Priced proportionally</Text>
             </View>
             <View style={styles.lengthRow}>
-              {LENGTHS.map((l) => (
-                <View key={l.id} style={styles.lengthCol}>
-                  {l.popular && (
-                    <View style={styles.popularBadge}>
-                      <Text style={styles.popularText}>POPULAR</Text>
-                    </View>
-                  )}
-                  <TouchableOpacity style={[styles.lengthPill, l.active && styles.pillActive]}>
-                    <Text style={[styles.lengthTime, l.active && styles.pillTextActive]}>{l.time}</Text>
-                    <Text style={[styles.lengthPrice, l.active && styles.pillTextActive]}>{l.price}</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
+              {lengths.map((l, idx) => {
+                const isActive = selectedLengthIdx === idx;
+                return (
+                  <View key={l.id} style={styles.lengthCol}>
+                    {l.popular && (
+                      <View style={styles.popularBadge}>
+                        <Text style={styles.popularText}>POPULAR</Text>
+                      </View>
+                    )}
+                    <TouchableOpacity
+                      style={[styles.lengthPill, isActive && styles.pillActive]}
+                      onPress={() => setSelectedLengthIdx(idx)}
+                    >
+                      <Text style={[styles.lengthTime, isActive && styles.pillTextActive]}>{l.time}</Text>
+                      <Text style={[styles.lengthPrice, isActive && styles.pillTextActive]}>{l.price}</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
             </View>
           </View>
 
@@ -175,12 +488,19 @@ export default function SessionBookingScreen() {
           <View style={styles.subSection}>
             <Text style={styles.slotsLabel}>Available Afternoon & Evening Slots</Text>
             <View style={styles.slotsGrid}>
-              {SLOTS.map((s) => (
-                <TouchableOpacity key={s.id} style={[styles.slotBtn, s.active && styles.slotBtnActive]}>
-                  {s.icon && <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />}
-                  <Text style={[styles.slotText, s.active && styles.pillTextActive]}>{s.time}</Text>
-                </TouchableOpacity>
-              ))}
+              {activeSlots.map((slotTime, idx) => {
+                const isActive = selectedSlotIdx === idx;
+                return (
+                  <TouchableOpacity
+                    key={idx}
+                    style={[styles.slotBtn, isActive && styles.slotBtnActive]}
+                    onPress={() => setSelectedSlotIdx(idx)}
+                  >
+                    {isActive && <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />}
+                    <Text style={[styles.slotText, isActive && styles.pillTextActive]}>{slotTime}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
         </View>
@@ -245,8 +565,8 @@ export default function SessionBookingScreen() {
 
           <View style={styles.feeBreakdown}>
             <View style={styles.feeRow}>
-              <Text style={styles.feeLabel}>Session Fee (1 hr • Dr. Sarah Jenkins)</Text>
-              <Text style={styles.feeValue}>$45.00</Text>
+              <Text style={styles.feeLabel}>Session Fee ({selectedLengthObj.time} • {tutor.name})</Text>
+              <Text style={styles.feeValue}>${numericPrice}.00</Text>
             </View>
             <View style={styles.feeRow}>
               <Text style={styles.feeLabel}>Platform Service Fee <Ionicons name="information-circle-outline" size={12} color="#64748B" /></Text>
@@ -255,11 +575,11 @@ export default function SessionBookingScreen() {
             <View style={styles.divider} />
             <View style={styles.feeRow}>
               <Text style={styles.totalLabel}>Total Due</Text>
-              <Text style={styles.totalValue}>$45.00</Text>
+              <Text style={styles.totalValue}>${numericPrice}.00</Text>
             </View>
             <View style={[styles.feeRow, { marginTop: 12 }]}>
               <Text style={styles.remainingLabel}>Remaining balance after booking:</Text>
-              <Text style={styles.remainingValue}>$75.00</Text>
+              <Text style={styles.remainingValue}>${Math.max(0, 120 - numericPrice)}.00</Text>
             </View>
           </View>
         </View>
@@ -272,7 +592,7 @@ export default function SessionBookingScreen() {
 
         {/* --- CONFIRM BUTTON --- */}
         <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
-          <Text style={styles.confirmBtnText}>Confirm & Book Session • $45.00</Text>
+          <Text style={styles.confirmBtnText}>Confirm & Book Session • ${numericPrice}.00</Text>
           <Ionicons name="arrow-forward" size={20} color="#FFFFFF" style={{ marginLeft: 8 }} />
         </TouchableOpacity>
       </ScrollView>

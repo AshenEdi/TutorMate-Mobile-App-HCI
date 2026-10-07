@@ -1,5 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { supabase } from "../../../lib/supabase";
 import {
   Image,
   Platform,
@@ -12,56 +15,124 @@ import {
   View,
 } from "react-native";
 
-// --- MOCK DATA ---
-const SESSIONS = [
-  {
-    id: "1",
-    tutorName: "Dr. Sarah Jenkins",
-    tutorAvatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-    subject: "AP Calculus BC",
-    topic: "Taylor Series, Power Series & Convergence",
-    date: "Today, Mar 16",
-    time: "3:30 - 4:30 PM",
-    status: "Featured",
-    startTime: "45 MIN",
-    unlockTime: "3:15 PM",
-    delivery: "Interactive Video & Canvas Whiteboard",
-    rating: "5.0",
-  },
-  {
-    id: "2",
-    tutorName: "Elena Rostova, M.S.",
-    tutorAvatar: "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop",
-    subject: "Organic Chemistry II",
-    topic: "Reaction Mechanisms & Synthesis Practice",
-    date: "WED, MAR 18",
-    time: "4:00 PM EDT",
-    status: "Confirmed",
-    duration: "60 mins (1 hr)",
-    features: "Digital Notebook Sharing",
-  },
-  {
-    id: "3",
-    tutorName: "David Kim",
-    tutorAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop",
-    subject: "SAT Math Prep • 99th Percentile",
-    topic: "SAT Math Mock Review: Advanced Geometry",
-    date: "SAT, MAR 21",
-    time: "11:00 AM EDT",
-    status: "Pending Tutor",
-    info: "David typically responds within 3 hours. No charge will be placed until confirmed.",
-  },
-];
-
-const FILTER_TABS = [
-  { id: "all", label: "All (3)", active: true },
-  { id: "today", label: "Today (1)", active: false },
-  { id: "confirmed", label: "Confirmed (2)", active: false },
-  { id: "pending", label: "Pending (1)", active: false },
-];
+const DEFAULT_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
 
 export default function MySessionsScreen() {
   const router = useRouter();
+  const [sessionsList, setSessionsList] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function fetchBookings() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+
+        // 1. Fetch from Supabase — build the query with filter BEFORE awaiting
+        let dbQuery = supabase
+          .from("bookings")
+          .select("*")
+          .order("session_date", { ascending: true });
+
+        if (user?.id) {
+          dbQuery = dbQuery.eq("student_id", user.id);
+        }
+
+        const { data: dbBookings } = await dbQuery;
+
+        // 2. Fetch from AsyncStorage (local backup after offline booking)
+        let localBookings: any[] = [];
+        try {
+          const stored = await AsyncStorage.getItem("@tutormate_booked_sessions");
+          if (stored) localBookings = JSON.parse(stored);
+        } catch {}
+
+        // Only include local bookings that match the logged-in student
+        const filteredLocal = user?.id
+          ? localBookings.filter((b: any) => !b.studentId || b.studentId === user.id)
+          : localBookings;
+
+        const mergedMap: Record<string, any> = {};
+
+        // Add local bookings first (as fallback)
+        filteredLocal.forEach((b: any, idx: number) => {
+          const idStr = b.id || `local_${idx}`;
+          mergedMap[idStr] = {
+            id: idStr,
+            tutorName: b.tutorName || "Tutor",
+            tutorAvatar: b.tutorAvatar || DEFAULT_AVATAR,
+            subject: b.subject || "Tutoring Session",
+            topic: b.focusText || "Custom Tutoring Session",
+            date: b.date || "",
+            time: b.timeSlot || "",
+            status: b.status ? (b.status.charAt(0).toUpperCase() + b.status.slice(1)) : "Confirmed",
+            duration: b.duration || "60 mins (1 hr)",
+            delivery: b.deliveryFormat || "Interactive Video & Canvas Whiteboard",
+            rating: "5.0",
+            bookingRef: b.bookingRef || "",
+          };
+        });
+
+        // Add / override with DB bookings (authoritative source)
+        if (dbBookings && dbBookings.length > 0) {
+          dbBookings.forEach((b: any) => {
+            mergedMap[b.id] = {
+              id: b.id,
+              tutorName: b.tutor_name || "Tutor",
+              tutorAvatar: DEFAULT_AVATAR,
+              subject: b.subject || "Tutoring Session",
+              topic: b.focus_notes || "Custom Tutoring Session",
+              date: b.session_date || "",
+              time: b.time_slot || "",
+              status: b.status ? (b.status.charAt(0).toUpperCase() + b.status.slice(1)) : "Confirmed",
+              duration: b.duration || "60 mins (1 hr)",
+              delivery: b.delivery_format || "Interactive Video & Canvas Whiteboard",
+              rating: "5.0",
+              bookingRef: b.booking_ref || "",
+            };
+          });
+        }
+
+        if (isMounted) {
+          setSessionsList(Object.values(mergedMap));
+          setLoading(false);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch sessions:", err);
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    fetchBookings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const [activeTab, setActiveTab] = useState("all");
+
+  const todayCount = sessionsList.filter((s) => s.date?.toLowerCase().includes("today")).length;
+  const confirmedCount = sessionsList.filter((s) => s.status?.toLowerCase().includes("confirm") || s.status?.toLowerCase().includes("feature")).length;
+  const pendingCount = sessionsList.filter((s) => s.status?.toLowerCase().includes("pend")).length;
+
+  const filterTabs = [
+    { id: "all", label: `All (${sessionsList.length})` },
+    { id: "today", label: `Today (${todayCount})` },
+    { id: "confirmed", label: `Confirmed (${confirmedCount})` },
+    { id: "pending", label: `Pending (${pendingCount})` },
+  ];
+
+  const filteredSessions = sessionsList.filter((session) => {
+    if (activeTab === "today") return session.date?.toLowerCase().includes("today");
+    if (activeTab === "confirmed") return session.status?.toLowerCase().includes("confirm") || session.status?.toLowerCase().includes("feature");
+    if (activeTab === "pending") return session.status?.toLowerCase().includes("pend");
+    return true;
+  });
+
+  const featuredSession = filteredSessions[0] || sessionsList[0];
+  const upcomingSessions = filteredSessions.slice(1);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -95,14 +166,14 @@ export default function MySessionsScreen() {
         <View style={styles.pageHeader}>
           <TouchableOpacity
             style={styles.backBtn}
-            onPress={() => router.back()}
+            onPress={() => router.push("/(student)/dashboard")}
           >
             <Ionicons name="arrow-back" size={20} color="#1E293B" />
           </TouchableOpacity>
           
           <View style={styles.headerTitleContainer}>
             <Text style={styles.pageTitle}>My Sessions</Text>
-            <Text style={styles.pageSubtitle}>Spring Semester • 3 scheduled</Text>
+            <Text style={styles.pageSubtitle}>Spring Semester • {sessionsList.length} scheduled</Text>
           </View>
 
           <View style={styles.headerActions}>
@@ -122,169 +193,193 @@ export default function MySessionsScreen() {
           style={styles.filterTabs}
           contentContainerStyle={styles.filterTabsContent}
         >
-          {FILTER_TABS.map((tab) => (
-            <TouchableOpacity
-              key={tab.id}
-              style={[styles.filterTab, tab.active && styles.filterTabActive]}
-            >
-              <Text style={[styles.filterTabText, tab.active && styles.filterTabTextActive]}>
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {filterTabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <TouchableOpacity
+                key={tab.id}
+                style={[styles.filterTab, isActive && styles.filterTabActive]}
+                onPress={() => setActiveTab(tab.id)}
+              >
+                <Text style={[styles.filterTabText, isActive && styles.filterTabTextActive]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
 
-        {/* --- FEATURED SESSION CARD --- */}
-        <View style={styles.featuredCard}>
-          <View style={styles.featuredBadgeRow}>
-            <View style={styles.statusBadge}>
-              <View style={styles.greenDot} />
-              <Text style={styles.statusBadgeText}>STARTS IN 45 MIN</Text>
-            </View>
-            <Text style={styles.unlockText}>Room unlocks 3:15 PM</Text>
+        {/* --- EMPTY STATE --- */}
+        {!loading && sessionsList.length === 0 && (
+          <View style={styles.emptyState}>
+            <Ionicons name="calendar-outline" size={60} color="#CBD5E1" style={{ marginBottom: 16 }} />
+            <Text style={styles.emptyTitle}>No Sessions Yet</Text>
+            <Text style={styles.emptySubtitle}>When you book a session with a tutor, it will appear here.</Text>
+            <TouchableOpacity
+              style={styles.findTutorBtn}
+              onPress={() => router.push("/(student)/searchscreen")}
+            >
+              <Ionicons name="search" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+              <Text style={styles.findTutorBtnText}>Find a Tutor</Text>
+            </TouchableOpacity>
           </View>
+        )}
 
-          <View style={styles.tutorRow}>
-            <View style={styles.tutorAvatarWrapper}>
-              <Image source={{ uri: SESSIONS[0].tutorAvatar }} style={styles.tutorAvatar} />
-              <View style={styles.onlineBadge}>
-                <Ionicons name="flash" size={8} color="#FFFFFF" />
+        {/* --- FEATURED SESSION CARD --- */}
+        {featuredSession && (
+          <View style={styles.featuredCard}>
+            <View style={styles.featuredBadgeRow}>
+              <View style={styles.statusBadge}>
+                <View style={styles.greenDot} />
+                <Text style={styles.statusBadgeText}>
+                  {featuredSession.status?.toUpperCase() || "CONFIRMED SESSION"}
+                </Text>
               </View>
+              <Text style={styles.unlockText}>Room unlocks {featuredSession.unlockTime || "15 mins before"}</Text>
             </View>
-            <View style={styles.tutorInfo}>
-              <View style={styles.nameRatingRow}>
-                <Text style={styles.tutorName}>{SESSIONS[0].tutorName}</Text>
-                <View style={styles.ratingBox}>
-                  <Ionicons name="star" size={12} color="#D97706" />
-                  <Text style={styles.ratingText}>{SESSIONS[0].rating}</Text>
+
+            <View style={styles.tutorRow}>
+              <View style={styles.tutorAvatarWrapper}>
+                <Image source={{ uri: featuredSession.tutorAvatar }} style={styles.tutorAvatar} />
+                <View style={styles.onlineBadge}>
+                  <Ionicons name="flash" size={8} color="#FFFFFF" />
                 </View>
               </View>
-              <Text style={styles.featuredSubject}>{SESSIONS[0].subject}</Text>
-              <Text style={styles.featuredTopic}>{SESSIONS[0].topic}</Text>
-            </View>
-          </View>
-
-          <View style={styles.dateTimeRow}>
-            <View style={styles.dateTimeBox}>
-              <Ionicons name="calendar" size={16} color="#2563EB" />
-              <View style={styles.dateTimeTextCol}>
-                <Text style={styles.dateTimeLabel}>Date</Text>
-                <Text style={styles.dateTimeValue}>{SESSIONS[0].date}</Text>
+              <View style={styles.tutorInfo}>
+                <View style={styles.nameRatingRow}>
+                  <Text style={styles.tutorName}>{featuredSession.tutorName}</Text>
+                  <View style={styles.ratingBox}>
+                    <Ionicons name="star" size={12} color="#D97706" />
+                    <Text style={styles.ratingText}>{featuredSession.rating || "5.0"}</Text>
+                  </View>
+                </View>
+                <Text style={styles.featuredSubject}>{featuredSession.subject}</Text>
+                <Text style={styles.featuredTopic}>{featuredSession.topic}</Text>
               </View>
             </View>
-            <View style={styles.dateTimeBox}>
-              <Ionicons name="time" size={16} color="#2563EB" />
-              <View style={styles.dateTimeTextCol}>
-                <Text style={styles.dateTimeLabel}>Time</Text>
-                <Text style={styles.dateTimeValue}>{SESSIONS[0].time}</Text>
+
+            <View style={styles.dateTimeRow}>
+              <View style={styles.dateTimeBox}>
+                <Ionicons name="calendar" size={16} color="#2563EB" />
+                <View style={styles.dateTimeTextCol}>
+                  <Text style={styles.dateTimeLabel}>Date</Text>
+                  <Text style={styles.dateTimeValue}>{featuredSession.date}</Text>
+                </View>
+              </View>
+              <View style={styles.dateTimeBox}>
+                <Ionicons name="time" size={16} color="#2563EB" />
+                <View style={styles.dateTimeTextCol}>
+                  <Text style={styles.dateTimeLabel}>Time</Text>
+                  <Text style={styles.dateTimeValue}>{featuredSession.time}</Text>
+                </View>
               </View>
             </View>
-          </View>
 
-          <View style={styles.deliveryRow}>
-            <Ionicons name="videocam-outline" size={18} color="#0D9488" />
-            <Text style={styles.deliveryText}>{SESSIONS[0].delivery}</Text>
-          </View>
+            <View style={styles.deliveryRow}>
+              <Ionicons name="videocam-outline" size={18} color="#0D9488" />
+              <Text style={styles.deliveryText}>{featuredSession.delivery || "Interactive Video & Canvas Whiteboard"}</Text>
+            </View>
 
-          <View style={styles.featuredActions}>
-            <TouchableOpacity style={styles.joinBtn}>
-              <Ionicons name="videocam" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-              <Text style={styles.joinBtnText}>Join Whiteboard Room</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.chatBtn}>
-              <Ionicons name="chatbubble-ellipses-outline" size={22} color="#2563EB" />
-            </TouchableOpacity>
+            <View style={styles.featuredActions}>
+              <TouchableOpacity style={styles.joinBtn}>
+                <Ionicons name="videocam" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.joinBtnText}>Join Whiteboard Room</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.chatBtn}
+                onPress={() => router.push("/(student)/ChatConversation")}
+              >
+                <Ionicons name="chatbubble-ellipses-outline" size={22} color="#2563EB" />
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
+        )}
 
         {/* --- UPCOMING SESSIONS SECTION --- */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Coming Up This Week</Text>
-          <Text style={styles.sectionCount}>2 sessions</Text>
+          <Text style={styles.sectionCount}>{upcomingSessions.length} session{upcomingSessions.length !== 1 ? 's' : ''}</Text>
         </View>
 
-        {/* --- SESSION CARD 1 (Confirmed) --- */}
-        <View style={styles.sessionCard}>
-          <View style={styles.cardTopRow}>
-            <View style={styles.cardDateRow}>
-              <Ionicons name="calendar-outline" size={16} color="#2563EB" />
-              <Text style={styles.cardDateText}>{SESSIONS[1].date} • {SESSIONS[1].time}</Text>
-            </View>
-            <View style={styles.confirmedBadge}>
-              <Ionicons name="checkmark-circle-outline" size={12} color="#10B981" />
-              <Text style={styles.confirmedBadgeText}>Confirmed</Text>
-            </View>
-          </View>
+        {/* --- DYNAMIC UPCOMING SESSIONS CARDS --- */}
+        {upcomingSessions.map((session, idx) => {
+          const isPending = session.status?.toLowerCase().includes("pend");
+          return (
+            <View key={session.id || idx} style={styles.sessionCard}>
+              <View style={styles.cardTopRow}>
+                <View style={styles.cardDateRow}>
+                  <Ionicons name="calendar-outline" size={16} color="#2563EB" />
+                  <Text style={styles.cardDateText}>{session.date} • {session.time}</Text>
+                </View>
+                <View style={isPending ? styles.pendingBadge : styles.confirmedBadge}>
+                  <Ionicons
+                    name={isPending ? "time-outline" : "checkmark-circle-outline"}
+                    size={12}
+                    color={isPending ? "#D97706" : "#10B981"}
+                  />
+                  <Text style={isPending ? styles.pendingBadgeText : styles.confirmedBadgeText}>
+                    {session.status || "Confirmed"}
+                  </Text>
+                </View>
+              </View>
 
-          <View style={styles.cardTutorRow}>
-            <Image source={{ uri: SESSIONS[1].tutorAvatar }} style={styles.smallAvatar} />
-            <View style={styles.cardTutorInfo}>
-              <Text style={styles.cardTutorName}>{SESSIONS[1].tutorName}</Text>
-              <Text style={styles.cardSubject}>{SESSIONS[1].subject}</Text>
-              <Text style={styles.cardTopic}>{SESSIONS[1].topic}</Text>
-            </View>
-          </View>
+              <View style={styles.cardTutorRow}>
+                <Image source={{ uri: session.tutorAvatar }} style={styles.smallAvatar} />
+                <View style={styles.cardTutorInfo}>
+                  <Text style={styles.cardTutorName}>{session.tutorName}</Text>
+                  <Text style={styles.cardSubject}>{session.subject}</Text>
+                  <Text style={styles.cardTopic}>{session.topic}</Text>
+                </View>
+              </View>
 
-          <View style={styles.cardMetaRow}>
-            <View style={styles.metaItem}>
-              <Ionicons name="time-outline" size={14} color="#64748B" />
-              <Text style={styles.metaText}>{SESSIONS[1].duration}</Text>
-            </View>
-            <View style={styles.metaItem}>
-              <Ionicons name="reader-outline" size={14} color="#64748B" />
-              <Text style={styles.metaText}>{SESSIONS[1].features}</Text>
-            </View>
-          </View>
+              {session.info ? (
+                <View style={styles.infoBox}>
+                  <Ionicons name="information-circle-outline" size={16} color="#D97706" />
+                  <Text style={styles.infoBoxText}>{session.info}</Text>
+                </View>
+              ) : (
+                <View style={styles.cardMetaRow}>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="time-outline" size={14} color="#64748B" />
+                    <Text style={styles.metaText}>{session.duration || "60 mins (1 hr)"}</Text>
+                  </View>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="reader-outline" size={14} color="#64748B" />
+                    <Text style={styles.metaText}>{session.features || "Digital Notebook Sharing"}</Text>
+                  </View>
+                </View>
+              )}
 
-          <View style={styles.cardActions}>
-            <TouchableOpacity style={styles.secondaryBtn}>
-              <Text style={styles.secondaryBtnText}>Reschedule</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryBtn}>
-              <Text style={styles.secondaryBtnText}>View Details</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.smallChatBtn}>
-              <Ionicons name="chatbubble-outline" size={18} color="#64748B" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* --- SESSION CARD 2 (Pending) --- */}
-        <View style={styles.sessionCard}>
-          <View style={styles.cardTopRow}>
-            <View style={styles.cardDateRow}>
-              <Ionicons name="calendar-outline" size={16} color="#2563EB" />
-              <Text style={styles.cardDateText}>{SESSIONS[2].date} • {SESSIONS[2].time}</Text>
+              <View style={styles.cardActions}>
+                {isPending ? (
+                  <>
+                    <TouchableOpacity style={[styles.secondaryBtn, { backgroundColor: '#FFF1F2' }]}>
+                      <Text style={[styles.secondaryBtnText, { color: '#EF4444' }]}>Cancel Request</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.secondaryBtn}>
+                      <Text style={styles.secondaryBtnText}>Edit Booking</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <TouchableOpacity style={styles.secondaryBtn}>
+                      <Text style={styles.secondaryBtnText}>Reschedule</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.secondaryBtn}>
+                      <Text style={styles.secondaryBtnText}>View Details</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+                <TouchableOpacity 
+                  style={styles.smallChatBtn}
+                  onPress={() => router.push("/(student)/ChatConversation")}
+                >
+                  <Ionicons name="chatbubble-outline" size={18} color="#64748B" />
+                </TouchableOpacity>
+              </View>
             </View>
-            <View style={styles.pendingBadge}>
-              <Ionicons name="time-outline" size={12} color="#D97706" />
-              <Text style={styles.pendingBadgeText}>Pending Tutor</Text>
-            </View>
-          </View>
-
-          <View style={styles.cardTutorRow}>
-            <Image source={{ uri: SESSIONS[2].tutorAvatar }} style={styles.smallAvatar} />
-            <View style={styles.cardTutorInfo}>
-              <Text style={styles.cardTutorName}>{SESSIONS[2].tutorName}</Text>
-              <Text style={styles.cardSubject}>{SESSIONS[2].subject}</Text>
-              <Text style={styles.cardTopic}>{SESSIONS[2].topic}</Text>
-            </View>
-          </View>
-
-          <View style={styles.infoBox}>
-            <Ionicons name="information-circle-outline" size={16} color="#D97706" />
-            <Text style={styles.infoBoxText}>{SESSIONS[2].info}</Text>
-          </View>
-
-          <View style={styles.cardActions}>
-            <TouchableOpacity style={[styles.secondaryBtn, { backgroundColor: '#FFF1F2' }]}>
-              <Text style={[styles.secondaryBtnText, { color: '#EF4444' }]}>Cancel Request</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryBtn}>
-              <Text style={styles.secondaryBtnText}>Edit Booking</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+          );
+        })}
       </ScrollView>
 
       {/* --- BOTTOM TAB BAR --- */}
@@ -771,5 +866,37 @@ const styles = StyleSheet.create({
   tabLabelActive: {
     color: "#2563EB",
     fontWeight: "600",
+  },
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: 60,
+    paddingHorizontal: 32,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#1E293B",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: "#64748B",
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: 28,
+  },
+  findTutorBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#2563EB",
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 28,
+  },
+  findTutorBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
 });
