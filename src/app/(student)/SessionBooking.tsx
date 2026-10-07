@@ -45,6 +45,15 @@ interface TutorProfile {
 
 export default function SessionBookingScreen() {
   const router = useRouter();
+  const showMessage = (title: string, message: string, onOk?: () => void) => {
+    if (Platform.OS === "web") {
+      window.alert(`${title}\n\n${message}`);
+      onOk?.();
+    } else {
+      Alert.alert(title, message, [{ text: "OK", onPress: onOk }]);
+    }
+  };
+
   const params = useLocalSearchParams<{ tutorId?: string | string[] }>();
   const tutorId = Array.isArray(params.tutorId) ? params.tutorId[0] : params.tutorId;
 
@@ -100,7 +109,7 @@ export default function SessionBookingScreen() {
         }
       } catch (error) {
         console.error("Failed to load student wallet:", error);
-        Alert.alert("Error", "Unable to load your wallet balance.");
+        showMessage("Error", "Unable to load your wallet balance.");
       } finally {
         if (isMounted) setWalletLoading(false);
       }
@@ -287,12 +296,15 @@ export default function SessionBookingScreen() {
     try {
       const bookingTutorId = tutorId || tutorProfile?.id;
       if (!bookingTutorId) {
-        Alert.alert("Error", "A tutor is required to book a session.");
+        showMessage("Error", "A tutor is required to book a session.");
         return;
       }
 
       if ((userProfile?.wallet_balance ?? 0) < numericPrice) {
-        Alert.alert("Insufficient Balance", "Please add funds to continue.");
+        showMessage(
+          "Insufficient Balance",
+          `Your wallet has $${(userProfile?.wallet_balance ?? 0).toFixed(2)} but this session costs $${numericPrice.toFixed(2)}. Please add funds to continue.`,
+        );
         return;
       }
 
@@ -302,7 +314,7 @@ export default function SessionBookingScreen() {
       } = await supabase.auth.getUser();
       if (userError) throw userError;
       if (!currentUser) {
-        Alert.alert("Error", "Please sign in to book a session.");
+        showMessage("Error", "Please sign in to book a session.");
         return;
       }
 
@@ -423,7 +435,7 @@ export default function SessionBookingScreen() {
       });
     } catch (error) {
       console.error("Failed to book session:", error);
-      Alert.alert("Error", error instanceof Error ? error.message : "Unable to book the session.");
+      showMessage("Error", error instanceof Error ? error.message : "Unable to book the session.");
     } finally {
       setBooking(false);
     }
