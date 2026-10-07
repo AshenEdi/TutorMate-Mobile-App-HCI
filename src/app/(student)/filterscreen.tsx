@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "../../../lib/supabase";
 import {
-    Image,
+    Alert,
     Platform,
     SafeAreaView,
     ScrollView,
@@ -17,12 +18,120 @@ export default function SearchFilterScreen() {
   const router = useRouter();
 
   // State Management
-  const [selectedSubject, setSelectedSubject] = useState("Mathematics");
+  const [subjects, setSubjects] = useState<string[]>([]);
+  const [selectedSubject, setSelectedSubject] = useState("");
   const [selectedTimeSlot, setSelectedTimeSlot] = useState("morning");
   const [selectedRating, setSelectedRating] = useState("4.5");
+  const [availability, setAvailability] = useState<{
+    morning: string | null;
+    afternoon: string | null;
+    evening: string | null;
+  }>({ morning: null, afternoon: null, evening: null });
+  const [availabilityDates, setAvailabilityDates] = useState<string[]>([]);
+  const [priceHistogram, setPriceHistogram] = useState<number[]>([]);
+  const [priceBounds, setPriceBounds] = useState<[number, number]>([0, 0]);
 
-  // Histogram mock heights for price distribution
-  const priceHistogram = [20, 32, 45, 80, 95, 75, 40, 25, 18];
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadFilterOptions() {
+      try {
+        const [tutorsResult, availabilityResult] = await Promise.all([
+          supabase
+            .from("profiles")
+            .select("specialty, hourly_rate")
+            .eq("role", "tutor")
+            .not("specialty", "is", null),
+          supabase
+            .from("tutor_availability")
+            .select("date, morning_window, afternoon_window, evening_window")
+            .gte("date", new Date().toISOString().split("T")[0])
+            .order("date", { ascending: true }),
+        ]);
+        if (tutorsResult.error) throw tutorsResult.error;
+        if (availabilityResult.error) throw availabilityResult.error;
+
+        const tutorRows = tutorsResult.data ?? [];
+        const distinctSubjects = Array.from(
+          new Set(
+            tutorRows
+              .map((tutor) => tutor.specialty?.trim())
+              .filter((specialty): specialty is string => Boolean(specialty)),
+          ),
+        );
+        const rates = tutorRows
+          .filter((tutor) => tutor.hourly_rate != null)
+          .map((tutor) => Number(tutor.hourly_rate))
+          .filter((rate) => Number.isFinite(rate) && rate >= 0);
+        const minRate = rates.length ? Math.min(...rates) : 0;
+        const maxRate = rates.length ? Math.max(...rates) : 0;
+        const histogram = Array.from({ length: 9 }, () => 0);
+        rates.forEach((rate) => {
+          const bin = maxRate === minRate
+            ? 0
+            : Math.min(8, Math.floor(((rate - minRate) / (maxRate - minRate)) * 9));
+          histogram[bin] += 1;
+        });
+        const maximumBinCount = Math.max(...histogram, 1);
+        const scaledHistogram = histogram.map((count) =>
+          count ? (count / maximumBinCount) * 95 : 0,
+        );
+
+        const rows = availabilityResult.data ?? [];
+        const formatWindow = (value: unknown): string | null => {
+          if (typeof value === "string") return value.trim() || null;
+          if (Array.isArray(value)) {
+            const values = value.map((item) =>
+              typeof item === "string" ? item : JSON.stringify(item),
+            );
+            return values.filter(Boolean).join(", ") || null;
+          }
+          if (value && typeof value === "object") {
+            return Object.values(value as Record<string, unknown>)
+              .map(String)
+              .join(" - ");
+          }
+          return null;
+        };
+        const combineWindows = (
+          values: (string | null)[],
+        ): string | null => {
+          const uniqueWindows = Array.from(
+            new Set(values.filter((value): value is string => Boolean(value))),
+          );
+          return uniqueWindows.length ? uniqueWindows.join(", ") : null;
+        };
+        const dates = Array.from(
+          new Set(
+            rows
+              .map((row) => row.date)
+              .filter((date): date is string => Boolean(date)),
+          ),
+        );
+
+        if (isMounted) {
+          setSubjects(distinctSubjects);
+          setSelectedSubject((current) => current || distinctSubjects[0] || "");
+          setAvailability({
+            morning: combineWindows(rows.map((row) => formatWindow(row.morning_window))),
+            afternoon: combineWindows(rows.map((row) => formatWindow(row.afternoon_window))),
+            evening: combineWindows(rows.map((row) => formatWindow(row.evening_window))),
+          });
+          setAvailabilityDates(dates);
+          setPriceBounds([minRate, maxRate]);
+          setPriceHistogram(scaledHistogram);
+        }
+      } catch (error) {
+        console.error("Failed to load tutor filter options:", error);
+        Alert.alert("Error", "Unable to load tutor filters.");
+      }
+    }
+
+    void loadFilterOptions();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -93,14 +202,16 @@ export default function SearchFilterScreen() {
             style={styles.dropdownSelector}
             activeOpacity={0.8}
             onPress={() => {
-              const subjects = ["Mathematics", "Physics & Chemistry", "Computer Science", "Biology & MCAT", "SAT & Standardized"];
+              if (subjects.length === 0) return;
               const nextIdx = (subjects.indexOf(selectedSubject) + 1) % subjects.length;
               setSelectedSubject(subjects[nextIdx]);
             }}
           >
             <View style={styles.dropdownLeft}>
               <View style={styles.blueDot} />
-              <Text style={styles.dropdownText}>{selectedSubject}</Text>
+              <Text style={styles.dropdownText}>
+                {selectedSubject || "No subjects available"}
+              </Text>
             </View>
             <Ionicons name="chevron-down" size={18} color="#64748B" />
           </TouchableOpacity>
@@ -119,7 +230,9 @@ export default function SearchFilterScreen() {
               <Text style={styles.cardSectionTitle}>Availability</Text>
             </View>
             <View style={styles.selectedBadge}>
-              <Text style={styles.selectedBadgeText}>1 Selected</Text>
+              <Text style={styles.selectedBadgeText}>
+                {availabilityDates.length} Dates
+              </Text>
             </View>
           </View>
 
@@ -152,7 +265,7 @@ export default function SearchFilterScreen() {
                   selectedTimeSlot === "morning" && styles.timeBlockSubActive,
                 ]}
               >
-                8 AM - 12 PM
+                {availability.morning || "No availability"}
               </Text>
             </TouchableOpacity>
 
@@ -184,7 +297,7 @@ export default function SearchFilterScreen() {
                   selectedTimeSlot === "afternoon" && styles.timeBlockSubActive,
                 ]}
               >
-                12 PM - 5 PM
+                {availability.afternoon || "No availability"}
               </Text>
             </TouchableOpacity>
 
@@ -215,15 +328,19 @@ export default function SearchFilterScreen() {
                   selectedTimeSlot === "evening" && styles.timeBlockSubActive,
                 ]}
               >
-                5 PM - 10 PM
+                {availability.evening || "No availability"}
               </Text>
             </TouchableOpacity>
           </View>
 
           {/* Time Range Slider Representation */}
           <View style={styles.timeRangeLabels}>
-            <Text style={styles.rangeLimitText}>Earliest: 08:00 AM</Text>
-            <Text style={styles.rangeLimitText}>Latest: 10:00 PM</Text>
+            <Text style={styles.rangeLimitText}>
+              Earliest: {availabilityDates[0] || "No dates listed"}
+            </Text>
+            <Text style={styles.rangeLimitText}>
+              Latest: {availabilityDates[availabilityDates.length - 1] || "No dates listed"}
+            </Text>
           </View>
 
           <View style={styles.sliderTrackBackground}>
@@ -245,11 +362,8 @@ export default function SearchFilterScreen() {
             <Text style={styles.cardSectionTitle}>Tutor Rating</Text>
           </View>
 
-          {[
-            { id: "4.5", score: "4.5", count: "94 tutors" },
-            { id: "4.0", score: "4.0", count: "148 tutors" },
-            { id: "3.5", score: "3.5", count: "172 tutors" },
-          ].map((item) => {
+          {["4.5", "4.0", "3.5"].map((score) => {
+            const item = { id: score, score };
             const isChecked = selectedRating === item.id;
             return (
               <TouchableOpacity
@@ -296,9 +410,6 @@ export default function SearchFilterScreen() {
                   <Text style={styles.aboveText}>& above</Text>
                 </View>
 
-                <View style={styles.countTag}>
-                  <Text style={styles.countTagText}>{item.count}</Text>
-                </View>
               </TouchableOpacity>
             );
           })}
@@ -317,7 +428,9 @@ export default function SearchFilterScreen() {
               <Text style={styles.cardSectionTitle}>Price Range</Text>
             </View>
             <View style={styles.pricePill}>
-              <Text style={styles.pricePillText}>$20/hr — $80/hr</Text>
+              <Text style={styles.pricePillText}>
+                ${priceBounds[0].toFixed(0)}/hr — ${priceBounds[1].toFixed(0)}/hr
+              </Text>
             </View>
           </View>
 
@@ -346,17 +459,17 @@ export default function SearchFilterScreen() {
           </View>
 
           <View style={styles.priceMinMaxRow}>
-            <Text style={styles.minMaxText}>Min: $15/hr</Text>
-            <Text style={styles.minMaxText}>Max: $120/hr</Text>
+            <Text style={styles.minMaxText}>Min: ${priceBounds[0].toFixed(0)}/hr</Text>
+            <Text style={styles.minMaxText}>Max: ${priceBounds[1].toFixed(0)}/hr</Text>
           </View>
         </View>
 
         {/* --- SECTION 5: VETTES EXPERTS BANNER --- */}
         <View style={styles.vettedCard}>
-          <Image
-            source={{
-              uri: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-            }}
+          <Ionicons
+            name="people-outline"
+            size={40}
+            color="#2563EB"
             style={styles.vettedAvatar}
           />
           <View style={{ flex: 1 }}>
@@ -381,8 +494,8 @@ export default function SearchFilterScreen() {
                 subject: selectedSubject,
                 timeSlot: selectedTimeSlot,
                 rating: selectedRating,
-                minPrice: "20",
-                maxPrice: "80",
+                minPrice: String(priceBounds[0]),
+                maxPrice: String(priceBounds[1]),
               },
             });
           }}
@@ -396,7 +509,7 @@ export default function SearchFilterScreen() {
         <TouchableOpacity
           style={styles.resetBtn}
           onPress={() => {
-            setSelectedSubject("Mathematics");
+            setSelectedSubject(subjects[0] || "");
             setSelectedTimeSlot("morning");
             setSelectedRating("4.5");
             router.push("/(student)/searchscreen");

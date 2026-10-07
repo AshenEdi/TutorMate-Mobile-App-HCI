@@ -1,16 +1,20 @@
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { useAuth, UserProfile } from "../../context/AuthContext";
+import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../../lib/supabase";
 import {
+    ActivityIndicator,
+    Alert,
     Image,
+    Modal,
     Platform,
     SafeAreaView,
     ScrollView,
     StatusBar,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
     View,
 } from "react-native";
@@ -32,81 +36,152 @@ interface SubjectPill {
   bgColor: string;
 }
 
-// --- MOCK DATA ---
-const PROFILE_STATS: StatCard[] = [
-  {
-    id: "1",
-    value: "14",
-    label: "Sessions",
-    icon: "checkmark-circle-outline",
-    iconColor: "#2563EB",
-    bgIconColor: "#EFF6FF",
-  },
-  {
-    id: "2",
-    value: "4–Day",
-    label: "Streak",
-    icon: "flame-outline",
-    iconColor: "#D97706",
-    bgIconColor: "#FEF3C7",
-  },
-  {
-    id: "3",
-    value: "4.9",
-    label: "Rating (12)",
-    icon: "star-outline",
-    iconColor: "#D97706",
-    bgIconColor: "#FEF3C7",
-  },
-  {
-    id: "4",
-    value: "2",
-    label: "Mentors",
-    icon: "school-outline",
-    iconColor: "#0D9488",
-    bgIconColor: "#CCFBF1",
-  },
-];
-
-const ACTIVE_SUBJECTS: SubjectPill[] = [
-  { id: "1", name: "AP Calculus BC", dotColor: "#2563EB", bgColor: "#EFF6FF" },
-  { id: "2", name: "AP Physics C", dotColor: "#0D9488", bgColor: "#E6FFFA" },
-  { id: "3", name: "College Essays", dotColor: "#F59E0B", bgColor: "#FEF3C7" },
-  { id: "4", name: "Linear Algebra", dotColor: "#6B7280", bgColor: "#F1F5F9" },
-];
-
-const TARGET_UNIVERSITIES = [
-  { id: "1", name: "Stanford", icon: "school-outline" },
-  { id: "2", name: "MIT", icon: "school-outline" },
-  { id: "3", name: "UC Berkeley", icon: "school-outline" },
-];
+interface StudentProfileData {
+  full_name: string | null;
+  email: string | null;
+  education: string | null;
+  avatar_url: string | null;
+  wallet_balance: number | null;
+}
 
 export default function UserProfileScreen() {
   const router = useRouter();
-  const { profile, user, signOut } = useAuth();
-  const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
+  const { profile: authProfile, user, signOut } = useAuth();
+  const [profile, setProfile] = useState<StudentProfileData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sessionsCompleted, setSessionsCompleted] = useState(0);
+  const [ratingAverage, setRatingAverage] = useState(0);
+  const [mentorCount, setMentorCount] = useState(0);
+  const [activeSubjects, setActiveSubjects] = useState<SubjectPill[]>([]);
+  const [addFundsModalVisible, setAddFundsModalVisible] = useState(false);
+  const [addFundsAmount, setAddFundsAmount] = useState("");
+  const [selectedQuickAmount, setSelectedQuickAmount] = useState<number | null>(null);
+  const [cardNumber, setCardNumber] = useState("");
+  const [expiry, setExpiry] = useState("");
+  const [cvv, setCvv] = useState("");
+  const [cardholderName, setCardholderName] = useState("");
+  const [processingPayment, setProcessingPayment] = useState(false);
   const [activeTab, setActiveTab] = useState("Profile");
+
+  const showMessage = (title: string, message: string) => {
+    if (Platform.OS === "web") {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
+
+  const resetPaymentForm = () => {
+    setAddFundsAmount("");
+    setSelectedQuickAmount(null);
+    setCardNumber("");
+    setExpiry("");
+    setCvv("");
+    setCardholderName("");
+  };
+
+  const closeAddFundsModal = () => {
+    setAddFundsModalVisible(false);
+    resetPaymentForm();
+  };
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadStudentData() {
       try {
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        const {
+          data: { user: currentUser },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError) throw userError;
         const activeUser = currentUser || user;
         if (!activeUser) return;
 
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from("profiles")
-          .select("*")
+          .select("full_name, email, education, avatar_url, wallet_balance")
           .eq("id", activeUser.id)
           .single();
+        if (error) throw error;
 
-        if (isMounted && data) {
-          setFetchedProfile(data as UserProfile);
+        const [
+          completedSessionsResult,
+          mentorsResult,
+          reviewsResult,
+          subjectsResult,
+        ] = await Promise.all([
+          supabase
+            .from("bookings")
+            .select("*", { count: "exact", head: true })
+            .eq("student_id", activeUser.id)
+            .eq("status", "completed"),
+          supabase
+            .from("bookings")
+            .select("tutor_id")
+            .eq("student_id", activeUser.id)
+            .not("tutor_id", "is", null),
+          supabase
+            .from("reviews")
+            .select("rating")
+            .eq("student_id", activeUser.id),
+          supabase
+            .from("bookings")
+            .select("subject")
+            .eq("student_id", activeUser.id)
+            .not("subject", "is", null),
+        ]);
+        if (completedSessionsResult.error) throw completedSessionsResult.error;
+        if (mentorsResult.error) throw mentorsResult.error;
+        if (reviewsResult.error) throw reviewsResult.error;
+        if (subjectsResult.error) throw subjectsResult.error;
+
+        const tutorIds = new Set(
+          (mentorsResult.data ?? [])
+            .map((booking) => booking.tutor_id)
+            .filter((tutorId): tutorId is string => Boolean(tutorId)),
+        );
+        const ratings = (reviewsResult.data ?? [])
+          .map((review) => Number(review.rating))
+          .filter(Number.isFinite);
+        const averageRating = ratings.length
+          ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
+          : 0;
+        const subjectNames = Array.from(
+          new Set(
+            (subjectsResult.data ?? [])
+              .map((booking) => booking.subject?.trim())
+              .filter((subject): subject is string => Boolean(subject)),
+          ),
+        );
+        const subjectColors = [
+          { dotColor: "#2563EB", bgColor: "#EFF6FF" },
+          { dotColor: "#0D9488", bgColor: "#E6FFFA" },
+          { dotColor: "#F59E0B", bgColor: "#FEF3C7" },
+          { dotColor: "#6B7280", bgColor: "#F1F5F9" },
+        ];
+
+        if (isMounted) {
+          setProfile({
+            ...data,
+            wallet_balance: data.wallet_balance == null ? 0 : Number(data.wallet_balance),
+          });
+          setSessionsCompleted(completedSessionsResult.count ?? 0);
+          setMentorCount(tutorIds.size);
+          setRatingAverage(averageRating);
+          setActiveSubjects(
+            subjectNames.map((name, index) => ({
+              id: name,
+              name,
+              ...subjectColors[index % subjectColors.length],
+            })),
+          );
         }
-      } catch (err) {
-        console.warn("Error fetching student profile:", err);
+      } catch (error) {
+        console.error("Error fetching student profile:", error);
+        Alert.alert("Error", "Unable to load your profile.");
+      } finally {
+        if (isMounted) setLoading(false);
       }
     }
 
@@ -117,18 +192,146 @@ export default function UserProfileScreen() {
     };
   }, [user]);
 
-  const activeProfile = fetchedProfile || profile;
+  const activeProfile = profile || authProfile;
 
   const userName =
     activeProfile?.full_name ||
     user?.user_metadata?.full_name ||
     (user?.email ? user.email.split("@")[0] : null) ||
-    "Alex Rivera";
+    "Student";
+  const streak = 0;
 
+  const profileStats: StatCard[] = [
+    {
+      id: "sessions",
+      value: String(sessionsCompleted),
+      label: "Sessions",
+      icon: "checkmark-circle-outline",
+      iconColor: "#2563EB",
+      bgIconColor: "#EFF6FF",
+    },
+    {
+      id: "streak",
+      value: String(streak),
+      label: "Streak",
+      icon: "flame-outline",
+      iconColor: "#D97706",
+      bgIconColor: "#FEF3C7",
+    },
+    {
+      id: "rating",
+      value: ratingAverage ? ratingAverage.toFixed(1) : "0",
+      label: "Rating",
+      icon: "star-outline",
+      iconColor: "#D97706",
+      bgIconColor: "#FEF3C7",
+    },
+    {
+      id: "mentors",
+      value: String(mentorCount),
+      label: "Mentors",
+      icon: "school-outline",
+      iconColor: "#0D9488",
+      bgIconColor: "#CCFBF1",
+    },
+  ];
   const userAvatar =
     activeProfile?.avatar_url ||
     user?.user_metadata?.avatar_url ||
     "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
+
+  const onConfirmAddFunds = async () => {
+    const amount = Number.parseFloat(addFundsAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showMessage("Error", "Enter a valid amount");
+      return;
+    }
+
+    const cardDigits = cardNumber.replace(/\D/g, "");
+    const expiryDigits = expiry.replace(/\D/g, "");
+    const cvvDigits = cvv.replace(/\D/g, "");
+    if (
+      cardDigits.length !== 16 ||
+      expiryDigits.length !== 4 ||
+      (cvvDigits.length !== 3 && cvvDigits.length !== 4) ||
+      !cardholderName.trim()
+    ) {
+      showMessage("Error", "Please fill all card details correctly");
+      return;
+    }
+
+    setProcessingPayment(true);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      const {
+        data: { user: currentUser },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      const activeUser = currentUser || user;
+      if (!activeUser) {
+        showMessage("Error", "Please sign in to add funds.");
+        return;
+      }
+
+      const newBalance = (profile?.wallet_balance ?? 0) + amount;
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ wallet_balance: newBalance })
+        .eq("id", activeUser.id);
+      if (updateError) {
+        showMessage("Error", updateError.message);
+        return;
+      }
+
+      const { error: insertError } = await supabase
+        .from("wallet_transactions")
+        .insert({
+          user_id: activeUser.id,
+          amount,
+          type: "deposit",
+          description: "Wallet top-up",
+        });
+      if (insertError) {
+        const { error: rollbackError } = await supabase
+          .from("profiles")
+          .update({ wallet_balance: profile?.wallet_balance ?? 0 })
+          .eq("id", activeUser.id);
+        if (rollbackError) {
+          console.error("Failed to roll back wallet balance:", rollbackError);
+        }
+        showMessage("Error", insertError.message);
+        return;
+      }
+
+      const { data, error: profileError } = await supabase
+        .from("profiles")
+        .select("full_name, email, education, avatar_url, wallet_balance")
+        .eq("id", activeUser.id)
+        .single();
+      if (profileError) throw profileError;
+      setProfile({
+        ...data,
+        wallet_balance: data.wallet_balance == null ? 0 : Number(data.wallet_balance),
+      });
+      closeAddFundsModal();
+      showMessage("Success", "Funds added successfully!");
+    } catch (error) {
+      console.error("Failed to add wallet funds:", error);
+      showMessage("Error", error instanceof Error ? error.message : "Unable to add funds.");
+    } finally {
+      setProcessingPayment(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ActivityIndicator size="large" color="#2563EB" />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -206,23 +409,14 @@ export default function UserProfileScreen() {
                   style={{ marginLeft: 4 }}
                 />
               </View>
-              <Text style={styles.userTrack}>Grade 12 • AP & Honors Track</Text>
-              <Text style={styles.userJoined}>Joined Fall 2025</Text>
+              <Text style={styles.userTrack}>{profile?.education || "Education not provided"}</Text>
+              <Text style={styles.userJoined}>{activeProfile?.email || user?.email || ""}</Text>
             </View>
-          </View>
-
-          {/* Goal Banner */}
-          <View style={styles.targetBanner}>
-            <MaterialCommunityIcons name="target" size={16} color="#D97706" />
-            <Text style={styles.targetText}>
-              Target:{" "}
-              <Text style={styles.targetHighlight}>5 on AP Calc & Physics</Text>
-            </Text>
           </View>
 
           {/* Quick Stats Grid */}
           <View style={styles.statsGrid}>
-            {PROFILE_STATS.map((stat) => (
+            {profileStats.map((stat) => (
               <View key={stat.id} style={styles.statBox}>
                 <View
                   style={[
@@ -256,10 +450,6 @@ export default function UserProfileScreen() {
               </View>
             </View>
 
-            <View style={styles.autoReloadBadge}>
-              <View style={styles.greenDot} />
-              <Text style={styles.autoReloadText}>Auto-Reload On</Text>
-            </View>
           </View>
 
           {/* Balance Box */}
@@ -277,14 +467,16 @@ export default function UserProfileScreen() {
             </View>
 
             <View style={styles.balanceRow}>
-              <Text style={styles.balanceAmount}>$120.00</Text>
-              <Text style={styles.creditsText}>~2.0 hrs credits</Text>
+              <Text style={styles.balanceAmount}>${(profile?.wallet_balance ?? 0).toFixed(2)}</Text>
             </View>
           </View>
 
           {/* Wallet Actions */}
           <View style={styles.walletActions}>
-            <TouchableOpacity style={styles.addFundsBtn}>
+            <TouchableOpacity
+              style={styles.addFundsBtn}
+              onPress={() => setAddFundsModalVisible(true)}
+            >
               <Ionicons
                 name="add"
                 size={18}
@@ -322,7 +514,9 @@ export default function UserProfileScreen() {
 
           {/* Subject Pills */}
           <View style={styles.pillsWrap}>
-            {ACTIVE_SUBJECTS.map((subject) => (
+            {activeSubjects.length === 0 ? (
+              <Text style={styles.subjectPillText}>No active subjects</Text>
+            ) : activeSubjects.map((subject) => (
               <View
                 key={subject.id}
                 style={[
@@ -340,43 +534,7 @@ export default function UserProfileScreen() {
               </View>
             ))}
           </View>
-
-          {/* Target Universities Sub-section */}
-          <Text style={styles.subSectionTitle}>TARGET UNIVERSITIES</Text>
-          <View style={styles.pillsWrap}>
-            {TARGET_UNIVERSITIES.map((uni) => (
-              <View key={uni.id} style={styles.uniPill}>
-                <Ionicons
-                  name="school-outline"
-                  size={12}
-                  color="#2563EB"
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={styles.uniPillText}>{uni.name}</Text>
-              </View>
-            ))}
-          </View>
         </View>
-
-        {/* --- SAVED TUTORS BANNER --- */}
-        <TouchableOpacity style={styles.listRowCard}>
-          <View style={styles.listRowLeft}>
-            <View style={styles.headerIconBg}>
-              <Ionicons name="bookmark-outline" size={18} color="#2563EB" />
-            </View>
-            <View>
-              <Text style={styles.listRowTitle}>Saved Tutors & Favorites</Text>
-              <Text style={styles.listRowSubtitle}>5 vetted instructors</Text>
-            </View>
-          </View>
-
-          <View style={styles.listRowRight}>
-            <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>5</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
-          </View>
-        </TouchableOpacity>
 
         {/* --- SUPPORT & COMMUNITY CARD --- */}
         <View style={styles.card}>
@@ -443,6 +601,185 @@ export default function UserProfileScreen() {
           Empowering Student Success Everywhere
         </Text>
       </ScrollView>
+
+      <Modal
+        visible={addFundsModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeAddFundsModal}
+      >
+        <View style={styles.paymentModalOverlay}>
+          <View style={styles.paymentModal}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={styles.paymentModalHeader}>
+                <View>
+                  <Text style={styles.paymentTitle}>Add Funds to Wallet</Text>
+                  <Text style={styles.paymentSubtitle}>Secure payment powered by TutorMate Pay</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.paymentCloseButton}
+                  onPress={closeAddFundsModal}
+                  accessibilityLabel="Close payment modal"
+                >
+                  <Ionicons name="close" size={22} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.paymentSectionTitle}>Choose an amount</Text>
+              <View style={styles.amountOptions}>
+                {[10, 25, 50, 100, 200].map((amount) => {
+                  const isSelected = selectedQuickAmount === amount;
+                  return (
+                    <TouchableOpacity
+                      key={amount}
+                      style={[
+                        styles.amountPill,
+                        isSelected && styles.amountPillSelected,
+                      ]}
+                      onPress={() => {
+                        setSelectedQuickAmount(amount);
+                        setAddFundsAmount(String(amount));
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.amountPillText,
+                          isSelected && styles.amountPillTextSelected,
+                        ]}
+                      >
+                        ${amount}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.paymentFieldLabel}>Custom amount</Text>
+              <View style={styles.paymentInputWrap}>
+                <Text style={styles.currencyPrefix}>$</Text>
+                <TextInput
+                  style={styles.paymentInput}
+                  value={addFundsAmount}
+                  onChangeText={(text) => {
+                    setAddFundsAmount(text.replace(/[^\d.]/g, ""));
+                    setSelectedQuickAmount(null);
+                  }}
+                  keyboardType="decimal-pad"
+                  placeholder="Enter amount"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <Text style={styles.paymentSectionTitle}>Card details</Text>
+              <Text style={styles.paymentFieldLabel}>Card Number</Text>
+              <View style={styles.paymentInputWrap}>
+                <TextInput
+                  style={styles.paymentInput}
+                  value={cardNumber}
+                  onChangeText={(text) => {
+                    const formatted = text
+                      .replace(/\D/g, "")
+                      .slice(0, 16)
+                      .replace(/(\d{4})(?=\d)/g, "$1 ");
+                    setCardNumber(formatted);
+                  }}
+                  placeholder="1234 5678 9012 3456"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                  maxLength={19}
+                  autoComplete="cc-number"
+                />
+                <Ionicons name="card-outline" size={20} color="#64748B" />
+              </View>
+
+              <View style={styles.cardDetailsRow}>
+                <View style={styles.cardDetailColumn}>
+                  <Text style={styles.paymentFieldLabel}>Expiry</Text>
+                  <View style={styles.paymentInputWrap}>
+                    <TextInput
+                      style={styles.paymentInput}
+                      value={expiry}
+                      onChangeText={(text) => {
+                        const formatted = text
+                          .replace(/\D/g, "")
+                          .slice(0, 4)
+                          .replace(/(\d{2})(?=\d)/, "$1/");
+                        setExpiry(formatted);
+                      }}
+                      placeholder="MM/YY"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="numeric"
+                      maxLength={5}
+                      autoComplete="cc-exp"
+                    />
+                  </View>
+                </View>
+                <View style={styles.cardDetailColumn}>
+                  <Text style={styles.paymentFieldLabel}>CVV</Text>
+                  <View style={styles.paymentInputWrap}>
+                    <TextInput
+                      style={styles.paymentInput}
+                      value={cvv}
+                      onChangeText={(text) => setCvv(text.replace(/\D/g, "").slice(0, 4))}
+                      placeholder="123"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="numeric"
+                      maxLength={4}
+                      secureTextEntry
+                      autoComplete="cc-csc"
+                    />
+                  </View>
+                </View>
+              </View>
+
+              <Text style={styles.paymentFieldLabel}>Cardholder Name</Text>
+              <View style={styles.paymentInputWrap}>
+                <TextInput
+                  style={styles.paymentInput}
+                  value={cardholderName}
+                  onChangeText={setCardholderName}
+                  placeholder="John Doe"
+                  placeholderTextColor="#94A3B8"
+                  autoComplete="cc-name"
+                  autoCapitalize="words"
+                />
+              </View>
+
+              <View style={styles.paymentTrustRow}>
+                <Ionicons name="lock-closed-outline" size={14} color="#0D9488" />
+                <Text style={styles.paymentTrustText}>Your data is encrypted and secure</Text>
+              </View>
+              <View style={styles.cardBrands}>
+                <Text style={styles.cardBrandVisa}>VISA</Text>
+                <Text style={styles.cardBrandMastercard}>Mastercard</Text>
+                <Text style={styles.cardBrandAmex}>AMEX</Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.paymentPrimaryButton}
+                onPress={onConfirmAddFunds}
+                disabled={processingPayment}
+              >
+                <Text style={styles.paymentPrimaryButtonText}>
+                  {processingPayment
+                    ? "Processing..."
+                    : `Add Funds • $${(Number.parseFloat(addFundsAmount) || 0).toFixed(2)}`}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.paymentCancelButton}
+                onPress={closeAddFundsModal}
+                disabled={processingPayment}
+              >
+                <Text style={styles.paymentCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* --- BOTTOM TAB BAR --- */}
       <View style={styles.tabBar}>
@@ -981,6 +1318,169 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#CBD5E1",
     marginTop: 2,
+  },
+  paymentModalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    backgroundColor: "rgba(15, 23, 42, 0.5)",
+  },
+  paymentModal: {
+    maxHeight: "90%",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 20,
+  },
+  paymentModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 20,
+  },
+  paymentTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  paymentSubtitle: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 4,
+  },
+  paymentCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F1F5F9",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 8,
+  },
+  paymentSectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginBottom: 10,
+  },
+  amountOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+  },
+  amountPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 18,
+    backgroundColor: "#F1F5F9",
+  },
+  amountPillSelected: {
+    backgroundColor: "#2563EB",
+  },
+  amountPillText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  amountPillTextSelected: {
+    color: "#FFFFFF",
+  },
+  paymentFieldLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#334155",
+    marginBottom: 6,
+  },
+  paymentInputWrap: {
+    minHeight: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 12,
+    marginBottom: 14,
+  },
+  currencyPrefix: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#64748B",
+    marginRight: 6,
+  },
+  paymentInput: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    color: "#1E293B",
+    paddingVertical: 11,
+  },
+  cardDetailsRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  cardDetailColumn: {
+    flex: 1,
+  },
+  paymentTrustRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  paymentTrustText: {
+    fontSize: 11,
+    color: "#0D9488",
+    marginLeft: 5,
+  },
+  cardBrands: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 14,
+    marginTop: 12,
+    marginBottom: 18,
+  },
+  cardBrandVisa: {
+    fontSize: 14,
+    fontWeight: "900",
+    fontStyle: "italic",
+    color: "#1A1F71",
+  },
+  cardBrandMastercard: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#EB001B",
+  },
+  cardBrandAmex: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#2E77BC",
+  },
+  paymentPrimaryButton: {
+    minHeight: 48,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#0256D0",
+    borderRadius: 24,
+    marginBottom: 10,
+  },
+  paymentPrimaryButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  paymentCancelButton: {
+    minHeight: 44,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F1F5F9",
+    borderRadius: 22,
+  },
+  paymentCancelButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#1E293B",
   },
   tabBar: {
     flexDirection: "row",
