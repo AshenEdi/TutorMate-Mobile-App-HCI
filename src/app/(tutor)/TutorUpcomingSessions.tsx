@@ -3,16 +3,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-  Alert,
-  Image,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Alert,
+    Image,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
 // In your app project:
@@ -143,7 +143,17 @@ export default function TutorUpcomingSessionsScreen() {
 
       {/* --- Top Header Navigation --- */}
       <View style={styles.header}>
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerIconBtn}>
+        <TouchableOpacity 
+          activeOpacity={0.7} 
+          style={styles.headerIconBtn}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace("/(tutor)/dashboard");
+            }
+          }}
+        >
           <Ionicons name="arrow-back" size={24} color="#0F172A" />
         </TouchableOpacity>
 
@@ -151,7 +161,11 @@ export default function TutorUpcomingSessionsScreen() {
           <Ionicons name="book" size={20} color="#FFFFFF" />
         </View>
 
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerProfileBtn}>
+        <TouchableOpacity 
+          activeOpacity={0.7} 
+          style={styles.headerProfileBtn}
+          onPress={() => router.push("/(tutor)/TutorProfile")}
+        >
           <Ionicons name="person" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>

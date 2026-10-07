@@ -179,7 +179,17 @@ export default function TutorPastSessionsScreen() {
 
       {/* --- Top Global Header --- */}
       <View style={styles.header}>
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerBackBtn}>
+        <TouchableOpacity 
+          activeOpacity={0.7} 
+          style={styles.headerBackBtn}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace("/(tutor)/dashboard");
+            }
+          }}
+        >
           <Ionicons name="arrow-back" size={24} color="#0F172A" />
         </TouchableOpacity>
 
@@ -187,7 +197,11 @@ export default function TutorPastSessionsScreen() {
           <Ionicons name="book" size={20} color="#FFFFFF" />
         </View>
 
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerProfileBtn}>
+        <TouchableOpacity 
+          activeOpacity={0.7} 
+          style={styles.headerProfileBtn}
+          onPress={() => router.push("/(tutor)/TutorProfile")}
+        >
           <Ionicons name="person" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
