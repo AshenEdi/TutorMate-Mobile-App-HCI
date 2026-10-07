@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import { useEffect, useState } from "react";
 import {
     ActivityIndicator,
@@ -17,6 +18,9 @@ import {
 } from "react-native";
 import { supabase } from "../../../lib/supabase";
 
+const DEFAULT_AVATAR =
+  "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
+
 export default function EditStudentProfileScreen() {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
@@ -24,6 +28,7 @@ export default function EditStudentProfileScreen() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [education, setEducation] = useState("");
   const [location, setLocation] = useState("");
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showToast, setShowToast] = useState(false);
@@ -42,7 +47,7 @@ export default function EditStudentProfileScreen() {
 
         const { data, error } = await supabase
           .from("profiles")
-          .select("full_name, email, phone_number, education, location")
+          .select("full_name, email, phone_number, education, location, avatar_url")
           .eq("id", user.id)
           .single();
         if (error) throw error;
@@ -53,6 +58,7 @@ export default function EditStudentProfileScreen() {
           setPhoneNumber(data.phone_number ?? "");
           setEducation(data.education ?? "");
           setLocation(data.location ?? "");
+          setAvatarUri(data.avatar_url ?? null);
         }
       } catch (error) {
         console.error("Failed to load student profile:", error);
@@ -67,6 +73,79 @@ export default function EditStudentProfileScreen() {
       isMounted = false;
     };
   }, []);
+
+  const convertToBase64 = async (uri: string): Promise<string> => {
+    if (uri.startsWith("data:") || uri.startsWith("http")) return uri;
+
+    if (Platform.OS === "web") {
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === "string") {
+            resolve(reader.result);
+          } else {
+            reject(new Error("Image conversion did not return a data URI."));
+          }
+        };
+        reader.onerror = () => reject(reader.error ?? new Error("Image conversion failed."));
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    try {
+      const FileSystem = await import("expo-file-system/legacy");
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const ext = uri.split(".").pop()?.toLowerCase() || "jpeg";
+      const mimeType = ext === "png" ? "image/png" : "image/jpeg";
+      return `data:${mimeType};base64,${base64}`;
+    } catch (error) {
+      console.error("Failed to convert image:", error);
+      throw error;
+    }
+  };
+
+  const handleChangePhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        if (Platform.OS === "web") {
+          window.alert("Permission needed\n\nPlease allow access to your photos.");
+        } else {
+          Alert.alert("Permission Needed", "Please allow access to your photos.");
+        }
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.5,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        if (asset.base64) {
+          const mimeType = asset.mimeType || "image/jpeg";
+          setAvatarUri(`data:${mimeType};base64,${asset.base64}`);
+        } else {
+          setAvatarUri(await convertToBase64(asset.uri));
+        }
+      }
+    } catch (error) {
+      console.error("Image picker error:", error);
+      if (Platform.OS === "web") {
+        window.alert("Error\n\nCould not open image picker.");
+      } else {
+        Alert.alert("Error", "Could not open image picker.");
+      }
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -88,6 +167,7 @@ export default function EditStudentProfileScreen() {
           phone_number: phoneNumber,
           education,
           location,
+          avatar_url: avatarUri,
           updated_at: new Date().toISOString(),
         })
         .eq("id", user.id);
@@ -160,16 +240,18 @@ export default function EditStudentProfileScreen() {
         <View style={styles.avatarCard}>
           <View style={styles.avatarWrapper}>
             <Image
-              source={{
-                uri: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-              }}
+              source={{ uri: avatarUri || DEFAULT_AVATAR }}
               style={styles.avatar}
             />
-            <TouchableOpacity style={styles.cameraBadge}>
+            <TouchableOpacity
+              style={styles.cameraBadge}
+              onPress={handleChangePhoto}
+              accessibilityLabel="Change profile photo"
+            >
               <Ionicons name="camera" size={14} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={handleChangePhoto}>
             <Text style={styles.changePhotoText}>Change Photo</Text>
           </TouchableOpacity>
           <Text style={styles.photoRequirements}>JPG, PNG or GIF. Max 5MB</Text>

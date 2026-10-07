@@ -55,8 +55,35 @@ export default function UserProfileScreen() {
   const [activeSubjects, setActiveSubjects] = useState<SubjectPill[]>([]);
   const [addFundsModalVisible, setAddFundsModalVisible] = useState(false);
   const [addFundsAmount, setAddFundsAmount] = useState("");
-  const [addingFunds, setAddingFunds] = useState(false);
+  const [selectedQuickAmount, setSelectedQuickAmount] = useState<number | null>(null);
+  const [cardNumber, setCardNumber] = useState("");
+  const [expiry, setExpiry] = useState("");
+  const [cvv, setCvv] = useState("");
+  const [cardholderName, setCardholderName] = useState("");
+  const [processingPayment, setProcessingPayment] = useState(false);
   const [activeTab, setActiveTab] = useState("Profile");
+
+  const showMessage = (title: string, message: string) => {
+    if (Platform.OS === "web") {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
+
+  const resetPaymentForm = () => {
+    setAddFundsAmount("");
+    setSelectedQuickAmount(null);
+    setCardNumber("");
+    setExpiry("");
+    setCvv("");
+    setCardholderName("");
+  };
+
+  const closeAddFundsModal = () => {
+    setAddFundsModalVisible(false);
+    resetPaymentForm();
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -216,12 +243,27 @@ export default function UserProfileScreen() {
   const onConfirmAddFunds = async () => {
     const amount = Number.parseFloat(addFundsAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      Alert.alert("Error", "Enter a valid amount");
+      showMessage("Error", "Enter a valid amount");
       return;
     }
 
-    setAddingFunds(true);
+    const cardDigits = cardNumber.replace(/\D/g, "");
+    const expiryDigits = expiry.replace(/\D/g, "");
+    const cvvDigits = cvv.replace(/\D/g, "");
+    if (
+      cardDigits.length !== 16 ||
+      expiryDigits.length !== 4 ||
+      (cvvDigits.length !== 3 && cvvDigits.length !== 4) ||
+      !cardholderName.trim()
+    ) {
+      showMessage("Error", "Please fill all card details correctly");
+      return;
+    }
+
+    setProcessingPayment(true);
     try {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
       const {
         data: { user: currentUser },
         error: userError,
@@ -229,7 +271,7 @@ export default function UserProfileScreen() {
       if (userError) throw userError;
       const activeUser = currentUser || user;
       if (!activeUser) {
-        Alert.alert("Error", "Please sign in to add funds.");
+        showMessage("Error", "Please sign in to add funds.");
         return;
       }
 
@@ -239,7 +281,7 @@ export default function UserProfileScreen() {
         .update({ wallet_balance: newBalance })
         .eq("id", activeUser.id);
       if (updateError) {
-        Alert.alert("Error", updateError.message);
+        showMessage("Error", updateError.message);
         return;
       }
 
@@ -259,7 +301,7 @@ export default function UserProfileScreen() {
         if (rollbackError) {
           console.error("Failed to roll back wallet balance:", rollbackError);
         }
-        Alert.alert("Error", insertError.message);
+        showMessage("Error", insertError.message);
         return;
       }
 
@@ -273,14 +315,13 @@ export default function UserProfileScreen() {
         ...data,
         wallet_balance: data.wallet_balance == null ? 0 : Number(data.wallet_balance),
       });
-      setAddFundsModalVisible(false);
-      setAddFundsAmount("");
-      Alert.alert("Success", "Funds added successfully!");
+      closeAddFundsModal();
+      showMessage("Success", "Funds added successfully!");
     } catch (error) {
       console.error("Failed to add wallet funds:", error);
-      Alert.alert("Error", error instanceof Error ? error.message : "Unable to add funds.");
+      showMessage("Error", error instanceof Error ? error.message : "Unable to add funds.");
     } finally {
-      setAddingFunds(false);
+      setProcessingPayment(false);
     }
   };
 
@@ -565,54 +606,177 @@ export default function UserProfileScreen() {
         visible={addFundsModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setAddFundsModalVisible(false)}
+        onRequestClose={closeAddFundsModal}
       >
-        <View
-          style={{
-            flex: 1,
-            justifyContent: "center",
-            paddingHorizontal: 20,
-            backgroundColor: "rgba(15, 23, 42, 0.5)",
-          }}
-        >
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Add Funds to Wallet</Text>
-            <View
-              style={{
-                marginTop: 16,
-                marginBottom: 16,
-                backgroundColor: "#F3F4F6",
-                borderRadius: 12,
-                paddingHorizontal: 12,
-                height: 48,
-                flexDirection: "row",
-                alignItems: "center",
-              }}
+        <View style={styles.paymentModalOverlay}>
+          <View style={styles.paymentModal}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
-              <TextInput
-                style={{ flex: 1, fontSize: 14, color: "#1E293B", fontWeight: "500" }}
-                value={addFundsAmount}
-                onChangeText={setAddFundsAmount}
-                keyboardType="numeric"
-                placeholder="Enter amount"
-                placeholderTextColor="#94A3B8"
-              />
-            </View>
-            <View style={styles.walletActions}>
+              <View style={styles.paymentModalHeader}>
+                <View>
+                  <Text style={styles.paymentTitle}>Add Funds to Wallet</Text>
+                  <Text style={styles.paymentSubtitle}>Secure payment powered by TutorMate Pay</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.paymentCloseButton}
+                  onPress={closeAddFundsModal}
+                  accessibilityLabel="Close payment modal"
+                >
+                  <Ionicons name="close" size={22} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.paymentSectionTitle}>Choose an amount</Text>
+              <View style={styles.amountOptions}>
+                {[10, 25, 50, 100, 200].map((amount) => {
+                  const isSelected = selectedQuickAmount === amount;
+                  return (
+                    <TouchableOpacity
+                      key={amount}
+                      style={[
+                        styles.amountPill,
+                        isSelected && styles.amountPillSelected,
+                      ]}
+                      onPress={() => {
+                        setSelectedQuickAmount(amount);
+                        setAddFundsAmount(String(amount));
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.amountPillText,
+                          isSelected && styles.amountPillTextSelected,
+                        ]}
+                      >
+                        ${amount}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.paymentFieldLabel}>Custom amount</Text>
+              <View style={styles.paymentInputWrap}>
+                <Text style={styles.currencyPrefix}>$</Text>
+                <TextInput
+                  style={styles.paymentInput}
+                  value={addFundsAmount}
+                  onChangeText={(text) => {
+                    setAddFundsAmount(text.replace(/[^\d.]/g, ""));
+                    setSelectedQuickAmount(null);
+                  }}
+                  keyboardType="decimal-pad"
+                  placeholder="Enter amount"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <Text style={styles.paymentSectionTitle}>Card details</Text>
+              <Text style={styles.paymentFieldLabel}>Card Number</Text>
+              <View style={styles.paymentInputWrap}>
+                <TextInput
+                  style={styles.paymentInput}
+                  value={cardNumber}
+                  onChangeText={(text) => {
+                    const formatted = text
+                      .replace(/\D/g, "")
+                      .slice(0, 16)
+                      .replace(/(\d{4})(?=\d)/g, "$1 ");
+                    setCardNumber(formatted);
+                  }}
+                  placeholder="1234 5678 9012 3456"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                  maxLength={19}
+                  autoComplete="cc-number"
+                />
+                <Ionicons name="card-outline" size={20} color="#64748B" />
+              </View>
+
+              <View style={styles.cardDetailsRow}>
+                <View style={styles.cardDetailColumn}>
+                  <Text style={styles.paymentFieldLabel}>Expiry</Text>
+                  <View style={styles.paymentInputWrap}>
+                    <TextInput
+                      style={styles.paymentInput}
+                      value={expiry}
+                      onChangeText={(text) => {
+                        const formatted = text
+                          .replace(/\D/g, "")
+                          .slice(0, 4)
+                          .replace(/(\d{2})(?=\d)/, "$1/");
+                        setExpiry(formatted);
+                      }}
+                      placeholder="MM/YY"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="numeric"
+                      maxLength={5}
+                      autoComplete="cc-exp"
+                    />
+                  </View>
+                </View>
+                <View style={styles.cardDetailColumn}>
+                  <Text style={styles.paymentFieldLabel}>CVV</Text>
+                  <View style={styles.paymentInputWrap}>
+                    <TextInput
+                      style={styles.paymentInput}
+                      value={cvv}
+                      onChangeText={(text) => setCvv(text.replace(/\D/g, "").slice(0, 4))}
+                      placeholder="123"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="numeric"
+                      maxLength={4}
+                      secureTextEntry
+                      autoComplete="cc-csc"
+                    />
+                  </View>
+                </View>
+              </View>
+
+              <Text style={styles.paymentFieldLabel}>Cardholder Name</Text>
+              <View style={styles.paymentInputWrap}>
+                <TextInput
+                  style={styles.paymentInput}
+                  value={cardholderName}
+                  onChangeText={setCardholderName}
+                  placeholder="John Doe"
+                  placeholderTextColor="#94A3B8"
+                  autoComplete="cc-name"
+                  autoCapitalize="words"
+                />
+              </View>
+
+              <View style={styles.paymentTrustRow}>
+                <Ionicons name="lock-closed-outline" size={14} color="#0D9488" />
+                <Text style={styles.paymentTrustText}>Your data is encrypted and secure</Text>
+              </View>
+              <View style={styles.cardBrands}>
+                <Text style={styles.cardBrandVisa}>VISA</Text>
+                <Text style={styles.cardBrandMastercard}>Mastercard</Text>
+                <Text style={styles.cardBrandAmex}>AMEX</Text>
+              </View>
+
               <TouchableOpacity
-                style={styles.historyBtn}
-                onPress={() => setAddFundsModalVisible(false)}
-              >
-                <Text style={styles.historyText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.addFundsBtn}
+                style={styles.paymentPrimaryButton}
                 onPress={onConfirmAddFunds}
-                disabled={addingFunds}
+                disabled={processingPayment}
               >
-                <Text style={styles.addFundsText}>{addingFunds ? "Adding..." : "Confirm"}</Text>
+                <Text style={styles.paymentPrimaryButtonText}>
+                  {processingPayment
+                    ? "Processing..."
+                    : `Add Funds • $${(Number.parseFloat(addFundsAmount) || 0).toFixed(2)}`}
+                </Text>
               </TouchableOpacity>
-            </View>
+              <TouchableOpacity
+                style={styles.paymentCancelButton}
+                onPress={closeAddFundsModal}
+                disabled={processingPayment}
+              >
+                <Text style={styles.paymentCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1154,6 +1318,169 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#CBD5E1",
     marginTop: 2,
+  },
+  paymentModalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    backgroundColor: "rgba(15, 23, 42, 0.5)",
+  },
+  paymentModal: {
+    maxHeight: "90%",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 20,
+  },
+  paymentModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 20,
+  },
+  paymentTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  paymentSubtitle: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 4,
+  },
+  paymentCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F1F5F9",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 8,
+  },
+  paymentSectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginBottom: 10,
+  },
+  amountOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+  },
+  amountPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 18,
+    backgroundColor: "#F1F5F9",
+  },
+  amountPillSelected: {
+    backgroundColor: "#2563EB",
+  },
+  amountPillText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  amountPillTextSelected: {
+    color: "#FFFFFF",
+  },
+  paymentFieldLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#334155",
+    marginBottom: 6,
+  },
+  paymentInputWrap: {
+    minHeight: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 12,
+    marginBottom: 14,
+  },
+  currencyPrefix: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#64748B",
+    marginRight: 6,
+  },
+  paymentInput: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    color: "#1E293B",
+    paddingVertical: 11,
+  },
+  cardDetailsRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  cardDetailColumn: {
+    flex: 1,
+  },
+  paymentTrustRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  paymentTrustText: {
+    fontSize: 11,
+    color: "#0D9488",
+    marginLeft: 5,
+  },
+  cardBrands: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 14,
+    marginTop: 12,
+    marginBottom: 18,
+  },
+  cardBrandVisa: {
+    fontSize: 14,
+    fontWeight: "900",
+    fontStyle: "italic",
+    color: "#1A1F71",
+  },
+  cardBrandMastercard: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#EB001B",
+  },
+  cardBrandAmex: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#2E77BC",
+  },
+  paymentPrimaryButton: {
+    minHeight: 48,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#0256D0",
+    borderRadius: 24,
+    marginBottom: 10,
+  },
+  paymentPrimaryButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  paymentCancelButton: {
+    minHeight: 44,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F1F5F9",
+    borderRadius: 22,
+  },
+  paymentCancelButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#1E293B",
   },
   tabBar: {
     flexDirection: "row",
