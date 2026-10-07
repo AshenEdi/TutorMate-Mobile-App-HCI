@@ -32,7 +32,13 @@ export default function SearchFilterScreen() {
       <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.backButton}
-          onPress={() => router.back()}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.push("/(student)/searchscreen");
+            }
+          }}
         >
           <Ionicons name="arrow-back" size={20} color="#0F172A" />
         </TouchableOpacity>
@@ -83,7 +89,15 @@ export default function SearchFilterScreen() {
             </View>
           </View>
 
-          <TouchableOpacity style={styles.dropdownSelector} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={styles.dropdownSelector}
+            activeOpacity={0.8}
+            onPress={() => {
+              const subjects = ["Mathematics", "Physics & Chemistry", "Computer Science", "Biology & MCAT", "SAT & Standardized"];
+              const nextIdx = (subjects.indexOf(selectedSubject) + 1) % subjects.length;
+              setSelectedSubject(subjects[nextIdx]);
+            }}
+          >
             <View style={styles.dropdownLeft}>
               <View style={styles.blueDot} />
               <Text style={styles.dropdownText}>{selectedSubject}</Text>
@@ -357,14 +371,37 @@ export default function SearchFilterScreen() {
         </View>
 
         {/* --- BOTTOM ACTION BUTTONS --- */}
-        <TouchableOpacity style={styles.applyBtn} activeOpacity={0.85}>
+        <TouchableOpacity
+          style={styles.applyBtn}
+          activeOpacity={0.85}
+          onPress={() => {
+            router.push({
+              pathname: "/(student)/searchscreen",
+              params: {
+                subject: selectedSubject,
+                timeSlot: selectedTimeSlot,
+                rating: selectedRating,
+                minPrice: "20",
+                maxPrice: "80",
+              },
+            });
+          }}
+        >
           <Text style={styles.applyBtnText}>Apply Filters</Text>
           <View style={styles.tutorsCountBadge}>
-            <Text style={styles.tutorsCountText}>(42 Tutors)</Text>
+            <Text style={styles.tutorsCountText}>(Applied)</Text>
           </View>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.resetBtn}>
+        <TouchableOpacity
+          style={styles.resetBtn}
+          onPress={() => {
+            setSelectedSubject("Mathematics");
+            setSelectedTimeSlot("morning");
+            setSelectedRating("4.5");
+            router.push("/(student)/searchscreen");
+          }}
+        >
           <Text style={styles.resetBtnText}>Reset to Default</Text>
         </TouchableOpacity>
       </ScrollView>

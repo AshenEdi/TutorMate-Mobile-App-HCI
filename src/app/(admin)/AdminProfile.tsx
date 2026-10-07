@@ -4,7 +4,7 @@ import {
   MaterialCommunityIcons,
 } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Alert,
   Image,
@@ -18,18 +18,67 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useAuth } from "../../context/AuthContext";
+import { useAuth, UserProfile } from "../../context/AuthContext";
+import { supabase } from "../../../lib/supabase";
 
 export default function AdminProfileScreen() {
   const router = useRouter();
-  const { profile, signOut } = useAuth();
+  const { profile, user, signOut } = useAuth();
+  const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
 
   const [is2FAEnabled, setIs2FAEnabled] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
 
-  const adminName = profile?.full_name || "Jordan Hayes";
-  const adminEmail = profile?.email || "jordan.hayes@tutormate.internal";
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadAdminData() {
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        const activeUser = currentUser || user;
+        if (!activeUser) return;
+
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", activeUser.id)
+          .single();
+
+        if (isMounted && data) {
+          setFetchedProfile(data as UserProfile);
+        }
+      } catch (err) {
+        console.warn("Error fetching admin profile:", err);
+      }
+    }
+
+    loadAdminData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
+
+  const activeProfile = fetchedProfile || profile;
+
+  const adminName =
+    activeProfile?.full_name ||
+    user?.user_metadata?.full_name ||
+    (user?.email ? user.email.split("@")[0] : null) ||
+    "Admin User";
+
+  const adminEmail = activeProfile?.email || user?.email || "admin@tutormate.internal";
+
+  const avatarUrl =
+    activeProfile?.avatar_url ||
+    user?.user_metadata?.avatar_url ||
+    "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=300";
+
+  const rawId = activeProfile?.id || user?.id;
+  const staffId = rawId
+    ? `#ADM-${rawId.replace(/-/g, "").slice(0, 5).toUpperCase()}`
+    : "#ADM-0104";
 
   const completeLogout = async () => {
     setLogoutError(null);
@@ -123,9 +172,7 @@ export default function AdminProfileScreen() {
           <View style={styles.avatarWrapper}>
             <Image
               source={{
-                uri:
-                  profile?.avatar_url ||
-                  "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=300",
+                uri: avatarUrl,
               }}
               style={styles.avatarImage}
             />
@@ -157,7 +204,7 @@ export default function AdminProfileScreen() {
               color="#64748B"
             />
             <Text style={styles.staffIdLabel}>Staff ID: </Text>
-            <Text style={styles.staffIdValue}>#ADM-0104</Text>
+            <Text style={styles.staffIdValue}>{staffId}</Text>
           </View>
         </View>
 

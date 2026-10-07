@@ -16,6 +16,7 @@ import {
     View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
+import { supabase } from '../../../lib/supabase';
 
 interface EditProfileFormData {
   fullName: string;
@@ -72,24 +73,34 @@ export default function EditProfileScreen() {
       setSaving(true);
       // Persist to local storage
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
+      await AsyncStorage.setItem('@tutormate_tutor_profile', JSON.stringify({
+        fullName: formData.fullName,
+        email: formData.email,
+        degree: formData.degreeCredentials,
+        locationTimezone: formData.location,
+        avatarUrl: formData.avatarUrl,
+        phoneNumber: formData.phoneNumber,
+        countryCode: '+1',
+      }));
 
-      // Supabase integration example:
-      // const { data: { user } } = await supabase.auth.getUser();
-      // const { error } = await supabase.from('tutors').upsert({
-      //   id: user?.id,
-      //   full_name: formData.fullName,
-      //   email: formData.email,
-      //   phone_number: formData.phoneNumber,
-      //   degree: formData.degreeCredentials,
-      //   location: formData.location,
-      //   online_video: formData.onlineVideo,
-      //   in_person: formData.inPerson,
-      //   bio: formData.bio,
-      //   hourly_rate: Number(formData.hourlyRate),
-      //   avatar_url: formData.avatarUrl,
-      //   updated_at: new Date().toISOString(),
-      // });
-      // if (error) throw error;
+      // Supabase integration
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from('profiles').upsert({
+          id: user.id,
+          full_name: formData.fullName,
+          email: formData.email,
+          phone_number: formData.phoneNumber,
+          education: formData.degreeCredentials,
+          degree: formData.degreeCredentials,
+          location: formData.location,
+          bio: formData.bio,
+          hourly_rate: Number(formData.hourlyRate) || 75,
+          avatar_url: formData.avatarUrl,
+          role: 'tutor',
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
+      }
 
       router.replace('/(tutor)/TutorProfile');
     } catch (error) {
