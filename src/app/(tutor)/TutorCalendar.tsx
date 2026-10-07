@@ -3,7 +3,6 @@ import {
     Ionicons,
     MaterialCommunityIcons,
 } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -20,7 +19,7 @@ import {
 } from 'react-native';
 import { supabase } from '../../../lib/supabase';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
-import { useAuth } from '../../context/AuthContext';
+import { getCurrentTutorId } from '../../lib/tutorData';
 
 type BottomTab = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
 
@@ -37,19 +36,17 @@ interface CalendarCell {
   dotsCount?: number;
 }
 
-const STORAGE_KEY = '@tutormate_schedule_availability_v1';
-
 export default function ManageScheduleScreen() {
   const router = useRouter();
-  const { user } = useAuth();
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('calendar');
-  const [currentDate, setCurrentDate] = useState<Date>(new Date(2026, 2, 1)); // Default March 2026
-  const [selectedDay, setSelectedDay] = useState<number>(10);
+  const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
+  const [selectedDay, setSelectedDay] = useState<number>(() => new Date().getDate());
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [dbAvailability, setDbAvailability] = useState<Record<number, WindowSchedule>>({});
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth(); // 0-indexed
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const monthName = currentDate.toLocaleString('en-US', { month: 'long' });
   const shortMonthName = currentDate.toLocaleString('en-US', { month: 'short' });
@@ -69,9 +66,9 @@ export default function ManageScheduleScreen() {
 
   // Availability windows state
   const [windows, setWindows] = useState<WindowSchedule>({
-    morning: true,
-    afternoon: true,
-    evening: true,
+    morning: false,
+    afternoon: false,
+    evening: false,
   });
 
   const handlePrevMonth = () => {
@@ -92,35 +89,6 @@ export default function ManageScheduleScreen() {
     }
   };
 
-  const getActiveTutorId = async (): Promise<string | null> => {
-    try {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      if (currentUser?.id) return currentUser.id;
-
-      if (user?.id) return user.id;
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('role', 'tutor')
-        .limit(1)
-        .maybeSingle();
-
-      if (profile?.id) return profile.id;
-
-      const { data: anyProf } = await supabase
-        .from('profiles')
-        .select('id')
-        .limit(1)
-        .maybeSingle();
-
-      return anyProf?.id || null;
-    } catch {
-      return user?.id || null;
-    }
-  };
-
-  // Fetch month availability schedule from Supabase & AsyncStorage
   useEffect(() => {
     let isMounted = true;
 
@@ -131,43 +99,29 @@ export default function ManageScheduleScreen() {
         const startDateStr = `${year}-${monthStr}-01`;
         const endDateStr = `${year}-${monthStr}-${String(daysInMonthCount).padStart(2, '0')}`;
 
-        const tutorId = await getActiveTutorId();
-
-        if (tutorId) {
-          const { data, error } = await supabase
-            .from('tutor_availability')
-            .select('*')
-            .eq('tutor_id', tutorId)
-            .gte('date', startDateStr)
-            .lte('date', endDateStr);
-
-          if (!error && data && isMounted) {
-            const map: Record<number, WindowSchedule> = {};
-            data.forEach((row: any) => {
-              const dayNum = parseInt(row.date.split('-')[2], 10);
-              map[dayNum] = {
-                morning: row.morning_window,
-                afternoon: row.afternoon_window,
-                evening: row.evening_window,
-              };
-            });
-            setDbAvailability(map);
-            if (map[selectedDay]) {
-              setWindows(map[selectedDay]);
-            }
-          }
-        }
-
-        const storageKeyMonth = `${STORAGE_KEY}_${year}_${monthStr}`;
-        const stored = await AsyncStorage.getItem(storageKeyMonth);
-        if (stored && isMounted) {
-          const parsed = JSON.parse(stored);
-          if (parsed[selectedDay] && !dbAvailability[selectedDay]) {
-            setWindows(parsed[selectedDay]);
-          }
-        }
+        const tutorId = await getCurrentTutorId();
+        const { data, error } = await supabase
+          .from('tutor_availability')
+          .select('date, morning_window, afternoon_window, evening_window')
+          .eq('tutor_id', tutorId)
+          .gte('date', startDateStr)
+          .lte('date', endDateStr);
+        if (error) throw error;
+        if (!isMounted) return;
+        const map: Record<number, WindowSchedule> = {};
+        (data ?? []).forEach((row) => {
+          const dayNum = Number(row.date.split('-')[2]);
+          map[dayNum] = {
+            morning: row.morning_window,
+            afternoon: row.afternoon_window,
+            evening: row.evening_window,
+          };
+        });
+        setDbAvailability(map);
+        setWindows(map[selectedDay] ?? { morning: false, afternoon: false, evening: false });
       } catch (err) {
-        console.warn('Failed to load schedule from database/storage:', err);
+        console.error('Failed to load tutor availability:', err);
+        if (isMounted) Alert.alert('Availability error', err instanceof Error ? err.message : 'Unable to load availability.');
       }
     }
 
@@ -176,7 +130,7 @@ export default function ManageScheduleScreen() {
     return () => {
       isMounted = false;
     };
-  }, [currentDate, selectedDay, user]);
+  }, [currentDate, selectedDay, month, year]);
 
   const activeBlocksCount = [windows.morning, windows.afternoon, windows.evening].filter(
     Boolean
@@ -191,22 +145,7 @@ export default function ManageScheduleScreen() {
     try {
       setIsSaving(true);
       const monthStr = String(month + 1).padStart(2, '0');
-      const storageKeyMonth = `${STORAGE_KEY}_${year}_${monthStr}`;
-      const existing = await AsyncStorage.getItem(storageKeyMonth);
-      const scheduleMap = existing ? JSON.parse(existing) : {};
-      scheduleMap[selectedDay] = windows;
-
-      await AsyncStorage.setItem(storageKeyMonth, JSON.stringify(scheduleMap));
-
-      const tutorId = await getActiveTutorId();
-
-      if (!tutorId) {
-        Alert.alert(
-          'Authentication Required',
-          'No tutor ID found. Please log in as a tutor to save your schedule to the database.'
-        );
-        return;
-      }
+      const tutorId = await getCurrentTutorId();
 
       const dayStr = String(selectedDay).padStart(2, '0');
       const formattedDate = `${year}-${monthStr}-${dayStr}`;
@@ -218,7 +157,7 @@ export default function ManageScheduleScreen() {
           morning_window: windows.morning,
           afternoon_window: windows.afternoon,
           evening_window: windows.evening,
-          timezone: 'America/Los_Angeles',
+          timezone,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'tutor_id,date' }
@@ -276,12 +215,7 @@ export default function ManageScheduleScreen() {
     try {
       setIsSaving(true);
       const monthStr = String(month + 1).padStart(2, '0');
-      const tutorId = await getActiveTutorId();
-
-      if (!tutorId) {
-        Alert.alert('Authentication Required', 'No tutor ID found. Please log in as a tutor.');
-        return;
-      }
+      const tutorId = await getCurrentTutorId();
 
       const rows = matchingDays.map((d) => ({
         tutor_id: tutorId,
@@ -289,7 +223,7 @@ export default function ManageScheduleScreen() {
         morning_window: windows.morning,
         afternoon_window: windows.afternoon,
         evening_window: windows.evening,
-        timezone: 'America/Los_Angeles',
+        timezone,
         updated_at: new Date().toISOString(),
       }));
 
@@ -731,9 +665,6 @@ export default function ManageScheduleScreen() {
               size={23}
               color={activeBottomTab === 'requests' ? '#2563EB' : '#64748B'}
             />
-            <View style={styles.redBadgeCircle}>
-              <Text style={styles.redBadgeText}>2</Text>
-            </View>
           </View>
           <Text
             style={[

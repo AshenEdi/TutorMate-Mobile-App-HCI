@@ -22,23 +22,39 @@ CREATE TABLE IF NOT EXISTS public.tutor_availability (
 CREATE INDEX IF NOT EXISTS idx_tutor_availability_tutor_date 
     ON public.tutor_availability (tutor_id, date);
 
--- 3. Grant required privileges to postgres roles (Fixes Error 42501)
-GRANT ALL ON TABLE public.tutor_availability TO anon, authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+-- 3. Grant authenticated clients only the operations used by the app.
+REVOKE ALL ON TABLE public.tutor_availability FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.tutor_availability TO authenticated;
 
 -- 4. Enable Row Level Security (RLS)
 ALTER TABLE public.tutor_availability ENABLE ROW LEVEL SECURITY;
 
--- 5. RLS Policies (Allow read/write access for authenticated & anon clients)
+-- 5. RLS Policies (tutors manage only their own availability)
 DROP POLICY IF EXISTS "Tutors can manage their own availability" ON public.tutor_availability;
 DROP POLICY IF EXISTS "Anyone authenticated can view tutor availability" ON public.tutor_availability;
 DROP POLICY IF EXISTS "Enable all access for tutor availability" ON public.tutor_availability;
 
-CREATE POLICY "Enable all access for tutor availability"
+CREATE POLICY "Authenticated users can view tutor availability"
     ON public.tutor_availability
-    FOR ALL
+    FOR SELECT TO authenticated
     USING (true)
-    WITH CHECK (true);
+;
+
+CREATE POLICY "Tutors can insert their own availability"
+    ON public.tutor_availability
+    FOR INSERT TO authenticated
+    WITH CHECK (auth.uid() = tutor_id);
+
+CREATE POLICY "Tutors can update their own availability"
+    ON public.tutor_availability
+    FOR UPDATE TO authenticated
+    USING (auth.uid() = tutor_id)
+    WITH CHECK (auth.uid() = tutor_id);
+
+CREATE POLICY "Tutors can delete their own availability"
+    ON public.tutor_availability
+    FOR DELETE TO authenticated
+    USING (auth.uid() = tutor_id);
 
 -- 6. Auto-update updated_at timestamp trigger
 CREATE OR REPLACE FUNCTION update_tutor_availability_updated_at()

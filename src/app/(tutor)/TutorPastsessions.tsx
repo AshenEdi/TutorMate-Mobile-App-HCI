@@ -4,7 +4,6 @@ import {
     Ionicons,
     MaterialCommunityIcons,
 } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -21,9 +20,12 @@ import {
     View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
-// In your Supabase setup:
-// import { supabase } from '@/lib/supabase';
-// import { useRouter } from 'expo-router';
+import {
+  formatBookingDate,
+  getProfilesById,
+  getTutorBookings,
+  localDateString,
+} from '../../lib/tutorData';
 
 // --- Type Definitions ---
 type MainTab = 'upcoming' | 'past';
@@ -39,7 +41,7 @@ interface PastSessionRecord {
   sessionMode: string;
   dateStr: string;
   timeStr: string;
-  status: 'Completed' | 'Cancelled by Student';
+  status: 'Completed' | 'Cancelled' | 'Declined';
   payoutAmount: string;
   payoutStatus: string;
   // Dynamic card content
@@ -56,102 +58,73 @@ interface PastSessionRecord {
   hasFollowUpMsg?: boolean;
 }
 
-const STORAGE_KEY = '@tutormate_past_sessions_cache';
-
-const INITIAL_RECORDS: PastSessionRecord[] = [
-  {
-    id: 'rec_1',
-    studentName: 'Marcus Sterling',
-    avatarUrl:
-      'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=200&auto=format&fit=crop&q=80',
-    isVerified: true,
-    subject: 'AP Calculus BC',
-    sessionMode: 'Online Session',
-    dateStr: 'Yesterday, Mar 14',
-    timeStr: '4:00 PM (60 min)',
-    status: 'Completed',
-    payoutAmount: '+$45.00',
-    payoutStatus: 'Payout Sent',
-    rating: 5.0,
-    reviewAuthorTag: 'Student Review',
-    reviewComment:
-      '"Great explanation of Taylor series convergence! Solved my prep confusion in 20 minutes."',
-    hasSessionNotes: true,
-    hasReceipt: true,
-  },
-  {
-    id: 'rec_2',
-    studentName: 'Sarah Lin',
-    avatarUrl:
-      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
-    subject: 'Multivariable Calc',
-    sessionMode: '1:1 Tutoring',
-    dateStr: 'Monday, Mar 9',
-    timeStr: '2:00 PM (90 min)',
-    status: 'Completed',
-    payoutAmount: '+$67.50',
-    payoutStatus: 'Payout Sent',
-    whiteboardFiles: [
-      { name: 'Whiteboard_Mar9.pdf', type: 'pdf' },
-      { name: 'Homework_sol.pdf', type: 'attachment' },
-    ],
-    hasWhiteboardView: true,
-    hasFollowUpMsg: true,
-  },
-  {
-    id: 'rec_3',
-    studentName: 'Emily Watson',
-    avatarUrl:
-      'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&auto=format&fit=crop&q=80',
-    subject: 'Organic Chemistry I',
-    sessionMode: '',
-    dateStr: 'Friday, Mar 6',
-    timeStr: '11:00 AM (60 min)',
-    status: 'Completed',
-    payoutAmount: '+$55.00',
-    payoutStatus: 'Payout Sent',
-    summaryNote: 'Covered SN1/SN2 reaction mechanisms and stereochemistry.',
-    leftRatingTag: '5.0 Rating Left',
-    hasReceipt: true,
-  },
-  {
-    id: 'rec_4',
-    studentName: 'David Kim',
-    initials: 'DK',
-    subject: 'AP Physics C',
-    sessionMode: '',
-    dateStr: 'Feb 28, 2026',
-    timeStr: '3:00 PM',
-    status: 'Cancelled by Student',
-    payoutAmount: '$0.00',
-    payoutStatus: 'Full Refund',
-    cancellationPolicyNotice:
-      'Cancelled >24h prior. No fee charged per student flexibility terms.',
-  },
-];
-
 export default function TutorPastSessionsScreen() {
   const router = useRouter();
   const [activeMainTab, setActiveMainTab] = useState<MainTab>('past');
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('sessions');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilterChip, setSelectedFilterChip] = useState('All Subjects');
-  const [records, setRecords] = useState<PastSessionRecord[]>(INITIAL_RECORDS);
+  const [records, setRecords] = useState<PastSessionRecord[]>([]);
+  const [upcomingCount, setUpcomingCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    (async () => {
+    let mounted = true;
+    const loadRecords = async () => {
       try {
-        const cached = await AsyncStorage.getItem(STORAGE_KEY);
-        if (cached) {
-          setRecords(JSON.parse(cached));
-        } else {
-          await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_RECORDS));
-        }
-      } catch (e) {
-        console.warn('Failed to load past sessions cache:', e);
+        const bookings = await getTutorBookings();
+        const today = localDateString();
+        setUpcomingCount(bookings.filter((booking) =>
+          booking.session_date >= today &&
+          (booking.status === 'accepted' || booking.status === 'confirmed')
+        ).length);
+        const pastBookings = bookings.filter((booking) =>
+          booking.status === 'completed' || booking.status === 'cancelled' || booking.status === 'declined'
+        );
+        const profiles = await getProfilesById(pastBookings.map((booking) => booking.student_id));
+        if (!mounted) return;
+        setRecords(pastBookings.map((booking) => {
+          const student = booking.student_id ? profiles.get(booking.student_id) : undefined;
+          const total = Number(booking.total_price ?? 0);
+          return {
+            id: booking.id,
+            studentName: student?.full_name || booking.student_name || 'Student',
+            avatarUrl: student?.avatar_url || undefined,
+            subject: booking.subject,
+            sessionMode: booking.delivery_format || '',
+            dateStr: formatBookingDate(booking.session_date),
+            timeStr: `${booking.time_slot}${booking.duration ? ` (${booking.duration})` : ''}`,
+            status: booking.status === 'completed' ? 'Completed' : booking.status === 'declined' ? 'Declined' : 'Cancelled',
+            payoutAmount: `$${total.toFixed(2)}`,
+            payoutStatus: 'Session value',
+            hasSessionNotes: Boolean(booking.focus_notes),
+            summaryNote: booking.focus_notes || undefined,
+          };
+        }));
+        setErrorMessage(null);
+      } catch (error) {
+        console.error('Failed to load tutor past sessions:', error);
+        if (mounted) setErrorMessage(error instanceof Error ? error.message : 'Unable to load past sessions.');
+      } finally {
+        if (mounted) setLoading(false);
       }
-    })();
+    };
+    void loadRecords();
+    return () => { mounted = false; };
   }, []);
+
+  const completedRecords = records.filter((record) => record.status === 'Completed');
+  const completedHours = completedRecords.reduce((sum, record) => {
+    const match = record.timeStr.match(/\((\d+)\s*(?:m|min|mins|minutes|h|hr|hrs|hours?)\)/i);
+    if (!match) return sum;
+    const duration = Number(match[1]);
+    return /h|hr|hour/i.test(match[0]) ? sum + duration : sum + duration / 60;
+  }, 0);
+  const completedSessionValue = completedRecords.reduce(
+    (sum, record) => sum + Number(record.payoutAmount.replace(/[^0-9.]/g, '') || 0),
+    0
+  );
 
   const filteredRecords = useMemo(() => {
     return records.filter((rec) => {
@@ -217,7 +190,7 @@ export default function TutorPastSessionsScreen() {
               <View style={styles.blueDot} />
               <Text style={styles.tutorViewText}>TUTOR VIEW</Text>
             </View>
-            <Text style={styles.termLabel}>Spring 2026 Term</Text>
+            <Text style={styles.termLabel}>{new Date().getFullYear()} tutoring history</Text>
           </View>
 
           <View style={styles.termActionBtns}>
@@ -266,7 +239,7 @@ export default function TutorPastSessionsScreen() {
                   activeMainTab === 'upcoming' && styles.countBadgeTextActive,
                 ]}
               >
-                4
+                {upcomingCount}
               </Text>
             </View>
           </TouchableOpacity>
@@ -296,7 +269,7 @@ export default function TutorPastSessionsScreen() {
                   activeMainTab === 'past' && styles.countBadgeTextActive,
                 ]}
               >
-                18
+                {records.length}
               </Text>
             </View>
           </TouchableOpacity>
@@ -309,11 +282,11 @@ export default function TutorPastSessionsScreen() {
               <View style={styles.lifetimeIconWrap}>
                 <Ionicons name="trending-up" size={18} color="#2563EB" />
               </View>
-              <Text style={styles.lifetimeTitle}>Lifetime Teaching Record</Text>
+              <Text style={styles.lifetimeTitle}>Past Teaching Record</Text>
             </View>
             <TouchableOpacity
               activeOpacity={0.7}
-              onPress={() => Alert.alert('Analytics', 'Navigating to detailed metrics')}
+              onPress={() => Alert.alert('Teaching record', `${records.length} past sessions`)}
             >
               <Text style={styles.viewAnalyticsLink}>View Analytics</Text>
             </TouchableOpacity>
@@ -327,30 +300,30 @@ export default function TutorPastSessionsScreen() {
                 <Text style={styles.statLabel}>Taught</Text>
               </View>
               <View style={styles.statNumberRow}>
-                <Text style={styles.statBigNumber}>34.5</Text>
+                <Text style={styles.statBigNumber}>{completedHours.toFixed(1)}</Text>
                 <Text style={styles.statUnit}>hrs</Text>
               </View>
-              <Text style={styles.statGrowthPositive}>↑ 14% mo/mo</Text>
+              <Text style={styles.statSubText}>{completedRecords.length} completed sessions</Text>
             </View>
 
             {/* Stat 2: Payout */}
             <View style={styles.statBox}>
               <View style={styles.statLabelRow}>
                 <MaterialCommunityIcons name="wallet-outline" size={13} color="#0D9488" />
-                <Text style={styles.statLabel}>Payout</Text>
+                <Text style={styles.statLabel}>Session value</Text>
               </View>
-              <Text style={styles.statBigNumber}>$1,840</Text>
-              <Text style={styles.statSubText}>Net settled</Text>
+              <Text style={styles.statBigNumber}>${completedSessionValue.toFixed(2)}</Text>
+              <Text style={styles.statSubText}>Completed booking totals</Text>
             </View>
 
             {/* Stat 3: Rating */}
             <View style={styles.statBox}>
               <View style={styles.statLabelRow}>
                 <FontAwesome name="star" size={12} color="#D97706" />
-                <Text style={styles.statLabel}>Rating</Text>
+                <Text style={styles.statLabel}>Cancelled</Text>
               </View>
-              <Text style={styles.statBigNumber}>4.98</Text>
-              <Text style={styles.statSubText}>42 reviews</Text>
+              <Text style={styles.statBigNumber}>{records.filter((record) => record.status === 'Cancelled').length}</Text>
+              <Text style={styles.statSubText}>Bookings</Text>
             </View>
           </View>
         </View>
@@ -411,7 +384,7 @@ export default function TutorPastSessionsScreen() {
             onPress={() => Alert.alert('Date Range', 'Select date range')}
           >
             <Ionicons name="calendar-outline" size={13} color="#475569" />
-            <Text style={styles.pillText}>March 2026</Text>
+            <Text style={styles.pillText}>{new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</Text>
           </TouchableOpacity>
 
           {/* Calculus Pill */}
@@ -460,19 +433,21 @@ export default function TutorPastSessionsScreen() {
         </ScrollView>
 
         {/* --- Past Session Cards List --- */}
-        {filteredRecords.map((item) => {
-          const isCancelled = item.status === 'Cancelled by Student';
+        {loading ? (
+          <Text style={styles.emptyText}>Loading past sessions…</Text>
+        ) : errorMessage ? (
+          <Text style={styles.emptyText}>{errorMessage}</Text>
+        ) : filteredRecords.length === 0 ? (
+          <Text style={styles.emptyText}>No past sessions found</Text>
+        ) : filteredRecords.map((item) => {
+          const isCancelled = item.status !== 'Completed';
 
           return (
             <View key={item.id} style={styles.sessionCard}>
               {/* Card Header Row: Date & Status Pill */}
               <View style={styles.cardHeaderRow}>
                 <View style={styles.cardHeaderLeft}>
-                  {item.id === 'rec_1' ? (
-                    <Ionicons name="time-outline" size={15} color="#2563EB" />
-                  ) : (
-                    <Ionicons name="calendar-outline" size={15} color="#475569" />
-                  )}
+                  <Ionicons name="calendar-outline" size={15} color="#475569" />
                   <Text style={styles.cardDateText}>{item.dateStr}</Text>
                   <Text style={styles.cardDotDivider}>•</Text>
                   <Text style={styles.cardTimeText}>{item.timeStr}</Text>
@@ -481,7 +456,7 @@ export default function TutorPastSessionsScreen() {
                 {isCancelled ? (
                   <View style={styles.cancelledBadge}>
                     <Ionicons name="close-circle-outline" size={13} color="#475569" />
-                    <Text style={styles.cancelledBadgeText}>Cancelled by Student</Text>
+                    <Text style={styles.cancelledBadgeText}>{item.status}</Text>
                   </View>
                 ) : (
                   <View style={styles.completedBadge}>
@@ -505,7 +480,7 @@ export default function TutorPastSessionsScreen() {
                     </View>
                   ) : (
                     <View style={styles.initialsAvatar}>
-                      <Text style={styles.initialsText}>{item.initials}</Text>
+                      <Ionicons name="person" size={18} color="#64748B" />
                     </View>
                   )}
 
@@ -752,9 +727,6 @@ export default function TutorPastSessionsScreen() {
               size={23}
               color={activeBottomTab === 'requests' ? '#2563EB' : '#64748B'}
             />
-            <View style={styles.redBadgeCircle}>
-              <Text style={styles.redBadgeText}>2</Text>
-            </View>
           </View>
           <Text
             style={[
@@ -810,6 +782,11 @@ export default function TutorPastSessionsScreen() {
 }
 
 const styles = StyleSheet.create({
+  emptyText: {
+    paddingVertical: 24,
+    color: '#64748B',
+    textAlign: 'center',
+  },
   safeArea: {
     flex: 1,
     backgroundColor: '#F8FAFC',

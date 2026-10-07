@@ -1,6 +1,8 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
-import React, { useState } from "react";
+import { useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Image,
   Platform,
   SafeAreaView,
@@ -13,6 +15,8 @@ import {
   View,
 } from "react-native";
 import { TutorBottomNav } from "../../components/TutorBottomNav";
+import { supabase } from "../../../lib/supabase";
+import { getCurrentTutorId, getProfilesById, getTutorBookings, localDateString } from "../../lib/tutorData";
 
 // --- TYPES ---
 export interface NavItem {
@@ -33,6 +37,8 @@ interface ActiveSessionUser {
 
 interface MessageCard {
   id: string;
+  conversationId: string;
+  studentId: string;
   name: string;
   gradeSubject: string;
   avatar?: string;
@@ -132,115 +138,126 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
       })}
     </View>
   );
-};
-
-// --- MOCK DATA ---
-const ACTIVE_SESSIONS: ActiveSessionUser[] = [
-  {
-    id: "1",
-    name: "Alex R.",
-    time: "3:00 PM",
-    avatar:
-      "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop",
-    isOnline: true,
-  },
-  {
-    id: "2",
-    name: "Maya L.",
-    time: "5:30 PM",
-    avatar:
-      "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop",
-    isOnline: true,
-  },
-  {
-    id: "3",
-    name: "Marcus",
-    time: "Tomorrow",
-    avatar:
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop",
-  },
-  {
-    id: "4",
-    name: "Chloe B.",
-    time: "Review",
-    avatar:
-      "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-  },
-];
-
-const RECENT_MESSAGES: MessageCard[] = [
-  {
-    id: "1",
-    name: "Alex Rivera",
-    gradeSubject: "Grade 12 • AP Calculus BC",
-    avatar:
-      "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop",
-    time: "2:28 PM",
-    isOnline: true,
-    message:
-      '"Hi Dr. Jenkins! I got stuck on question 4 on polar coordinates. Can we review that in 30 mins?"',
-    attachmentBadge: {
-      icon: "document-text-outline",
-      text: "Practice Test PDF",
-    },
-    statusPill: {
-      icon: "flash-outline",
-      text: "Starts in 32m • Room #calc-bc-882",
-      bgColor: "#CCFBF1",
-      textColor: "#0F766E",
-    },
-    unreadCount: 2,
-  },
-  {
-    id: "2",
-    name: "Maya Lin",
-    gradeSubject: "College Fresh • Multivariable Calc",
-    avatar:
-      "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop",
-    time: "1:15 PM",
-    isReadByOther: true,
-    isOnline: true,
-    message: '"Thank you for sending the partial derivatives...',
-    scheduledTime: "Today at 5:30 PM",
-    actionButton: {
-      label: "View Whiteboard →",
-      type: "link",
-    },
-  },
-  {
-    id: "3",
-    name: "Marcus Sterling",
-    gradeSubject: "Grade 11 • AP Calculus AB",
-    avatar:
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop",
-    time: "Yesterday",
-    isFromYou: true,
-    message: "You: I reviewed your practice quiz. Great job on the",
-    scheduledTime: "Tomorrow 4:00 PM",
-    footerLabel: "Homework graded",
-  },
-  {
-    id: "4",
-    name: "Jordan Taylor",
-    gradeSubject: "Parent Inquiry • SAT Math Prep",
-    initials: "JT",
-    time: "Mar 14",
-    message: '"Hi Dr. Jenkins, do you have any weekend slots for...',
-    tagPill: {
-      icon: "star-outline",
-      text: "Prospective Student",
-    },
-    actionButton: {
-      label: "Reply",
-      type: "primary",
-    },
-  },
-];
+}
 
 // --- MAIN SCREEN ---
 export default function TutorMessagesScreen() {
-  const [activeTab, setActiveTab] = useState("Messages");
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeSessions, setActiveSessions] = useState<ActiveSessionUser[]>([]);
+  const [recentMessages, setRecentMessages] = useState<MessageCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadTutorMessages = async () => {
+      try {
+        const tutorId = await getCurrentTutorId();
+        const [{ data: conversations, error: conversationError }, bookings] = await Promise.all([
+          supabase.from("conversations")
+            .select("id, student_id, updated_at")
+            .eq("tutor_id", tutorId)
+            .order("updated_at", { ascending: false }),
+          getTutorBookings(),
+        ]);
+        if (conversationError) throw conversationError;
+        const conversationRows = conversations ?? [];
+        const profiles = await getProfilesById([
+          ...conversationRows.map((conversation) => conversation.student_id),
+          ...bookings.map((booking) => booking.student_id),
+        ]);
+        const conversationIds = conversationRows.map((conversation) => conversation.id);
+        const { data: messages, error: messagesError } = conversationIds.length
+          ? await supabase.from("messages")
+              .select("id, conversation_id, sender_id, content, is_read, created_at")
+              .in("conversation_id", conversationIds)
+              .order("created_at", { ascending: false })
+          : { data: [], error: null };
+        if (messagesError) throw messagesError;
+        if (!mounted) return;
+
+        const latestByConversation = new Map<string, { id: string; conversation_id: string; sender_id: string; content: string; is_read: boolean | null; created_at: string }>();
+        const unreadByConversation = new Map<string, number>();
+        (messages ?? []).forEach((message) => {
+          if (!latestByConversation.has(message.conversation_id)) {
+            latestByConversation.set(message.conversation_id, message);
+          }
+          if (message.sender_id !== tutorId && !message.is_read) {
+            unreadByConversation.set(
+              message.conversation_id,
+              (unreadByConversation.get(message.conversation_id) ?? 0) + 1
+            );
+          }
+        });
+        setRecentMessages(conversationRows.flatMap((conversation) => {
+          const latest = latestByConversation.get(conversation.id);
+          const student = profiles.get(conversation.student_id);
+          if (!latest || !student) return [];
+          return [{
+            id: latest.id,
+            conversationId: conversation.id,
+            studentId: conversation.student_id,
+            name: student.full_name,
+            gradeSubject: student.education || student.specialty || "Student",
+            avatar: student.avatar_url || undefined,
+            time: new Date(latest.created_at).toLocaleString(),
+            message: latest.content,
+            isFromYou: latest.sender_id === tutorId,
+            unreadCount: unreadByConversation.get(conversation.id),
+          }];
+        }));
+        const today = localDateString();
+        setActiveSessions(bookings
+          .filter((booking) => booking.session_date === today &&
+            (booking.status === "accepted" || booking.status === "confirmed"))
+          .map((booking) => {
+            const student = booking.student_id ? profiles.get(booking.student_id) : undefined;
+            return {
+              id: booking.id,
+              name: student?.full_name || booking.student_name || "Student",
+              time: booking.time_slot,
+              avatar: student?.avatar_url || "",
+            };
+          }));
+        setErrorMessage(null);
+      } catch (error) {
+        console.error("Failed to load tutor messages:", error);
+        if (mounted) setErrorMessage(error instanceof Error ? error.message : "Unable to load messages.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    void loadTutorMessages();
+    return () => { mounted = false; };
+  }, []);
+
+  const filteredMessages = useMemo(
+    () => recentMessages.filter((message) =>
+      `${message.name} ${message.gradeSubject} ${message.message}`
+        .toLowerCase().includes(searchQuery.toLowerCase())
+    ),
+    [recentMessages, searchQuery]
+  );
+
+  const markAllRead = async () => {
+    try {
+      const tutorId = await getCurrentTutorId();
+      const conversationIds = recentMessages
+        .filter((message) => message.unreadCount)
+        .map((message) => message.conversationId);
+      if (!conversationIds.length) return;
+      const { error } = await supabase.from("messages")
+        .update({ is_read: true })
+        .in("conversation_id", conversationIds)
+        .neq("sender_id", tutorId);
+      if (error) throw error;
+      setRecentMessages((current) => current.map((message) => ({ ...message, unreadCount: 0 })));
+    } catch (error) {
+      console.error("Failed to mark tutor messages as read:", error);
+      Alert.alert("Update failed", error instanceof Error ? error.message : "Unable to update read status.");
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -258,12 +275,7 @@ export default function TutorMessagesScreen() {
         <Text style={styles.headerSubtitle}>Tutor Messages</Text>
 
         <TouchableOpacity style={styles.profileAvatar}>
-          <Image
-            source={{
-              uri: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-            }}
-            style={styles.avatarImg}
-          />
+          <Ionicons name="person" size={19} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
@@ -308,7 +320,7 @@ export default function TutorMessagesScreen() {
             />
             <Text style={styles.sectionTitle}>Active Sessions Today</Text>
           </View>
-          <Text style={styles.bookedText}>3 Booked</Text>
+          <Text style={styles.bookedText}>{activeSessions.length} Booked</Text>
         </View>
 
         <ScrollView
@@ -316,18 +328,20 @@ export default function TutorMessagesScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.activeSessionsContainer}
         >
-          {ACTIVE_SESSIONS.map((user) => (
+          {activeSessions.map((user) => (
             <TouchableOpacity
               key={user.id}
               style={styles.sessionUserCard}
               activeOpacity={0.8}
             >
               <View style={styles.avatarWrapper}>
-                <Image
-                  source={{ uri: user.avatar }}
-                  style={styles.sessionAvatar}
-                />
-                {user.isOnline && <View style={styles.onlineDot} />}
+                {user.avatar ? (
+                  <Image source={{ uri: user.avatar }} style={styles.sessionAvatar} />
+                ) : (
+                  <View style={[styles.sessionAvatar, styles.avatarFallback]}>
+                    <Ionicons name="person" size={18} color="#64748B" />
+                  </View>
+                )}
               </View>
               <Text style={styles.sessionUserName} numberOfLines={1}>
                 {user.name}
@@ -340,7 +354,7 @@ export default function TutorMessagesScreen() {
         {/* --- RECENT MESSAGES --- */}
         <View style={styles.sectionHeaderBetween}>
           <Text style={styles.sectionTitle}>Recent Messages</Text>
-          <TouchableOpacity style={styles.markReadBtn}>
+          <TouchableOpacity style={styles.markReadBtn} onPress={() => void markAllRead()}>
             <Text style={styles.markReadText}>Mark all read</Text>
             <Ionicons
               name="checkmark-done"
@@ -352,11 +366,20 @@ export default function TutorMessagesScreen() {
         </View>
 
         {/* MESSAGES LIST */}
-        {RECENT_MESSAGES.map((msg) => (
+        {loading ? (
+          <Text style={styles.emptyText}>Loading messages…</Text>
+        ) : errorMessage ? (
+          <Text style={styles.emptyText}>{errorMessage}</Text>
+        ) : filteredMessages.length === 0 ? (
+          <Text style={styles.emptyText}>No conversations yet</Text>
+        ) : filteredMessages.map((msg) => (
           <TouchableOpacity
             key={msg.id}
             style={styles.messageCard}
             activeOpacity={0.9}
+            onPress={() => router.push(
+              `/(tutor)/TutorConversation?id=${encodeURIComponent(msg.conversationId)}&studentId=${encodeURIComponent(msg.studentId)}&name=${encodeURIComponent(msg.name)}`
+            )}
           >
             {/* Header: User Info & Time */}
             <View style={styles.cardHeader}>
@@ -368,10 +391,9 @@ export default function TutorMessagesScreen() {
                   />
                 ) : (
                   <View style={styles.initialsAvatar}>
-                    <Text style={styles.initialsText}>{msg.initials}</Text>
+                    <Ionicons name="person" size={18} color="#64748B" />
                   </View>
                 )}
-                {msg.isOnline && <View style={styles.onlineDotMsg} />}
               </View>
 
               <View style={styles.userInfo}>
@@ -582,7 +604,9 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#2563EB",
   },
   avatarImg: {
     width: "100%",
@@ -665,6 +689,16 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 18,
+  },
+  avatarFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#E2E8F0",
+  },
+  emptyText: {
+    paddingVertical: 24,
+    color: "#64748B",
+    textAlign: "center",
   },
   onlineDot: {
     position: "absolute",

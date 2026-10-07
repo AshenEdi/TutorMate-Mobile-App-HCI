@@ -1,5 +1,4 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -15,9 +14,13 @@ import {
   View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
-// Supabase Integration note:
-// import { createClient } from '@supabase/supabase-js';
-// const supabase = createClient('SUPABASE_URL', 'SUPABASE_ANON_KEY');
+import { supabase } from '../../../lib/supabase';
+import {
+  formatBookingDate,
+  getCurrentTutorId,
+  getProfilesById,
+  getTutorBookings,
+} from '../../lib/tutorData';
 
 // --- Types ---
 type TabType = 'Pending' | 'Accepted' | 'Declined';
@@ -26,12 +29,12 @@ type BottomTabType = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profil
 interface BookingRequest {
   id: string;
   studentName: string;
-  avatarUrl: string;
-  isOnline: boolean;
+  avatarUrl?: string;
   badgeType?: 'verified' | 'star';
   subTitle: string;
-  ratePerHour: number;
-  rateLabel: 'Standard Rate' | 'Advanced Topic';
+  ratePerHour: number | null;
+  totalPrice: number | null;
+  rateLabel: string;
   subject: string;
   subjectIcon: 'sigma' | 'flask-outline' | 'code-tags';
   subjectBgColor: string;
@@ -44,118 +47,83 @@ interface BookingRequest {
   status: TabType;
 }
 
-// --- Initial Mock Data ---
-const INITIAL_REQUESTS: BookingRequest[] = [
-  {
-    id: '1',
-    studentName: 'Marcus Sterling',
-    avatarUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
-    isOnline: true,
-    badgeType: 'verified',
-    subTitle: 'Grade 12 • 4 sessions completed',
-    ratePerHour: 45,
-    rateLabel: 'Standard Rate',
-    subject: 'AP Calculus BC',
-    subjectIcon: 'sigma',
-    subjectBgColor: '#EBF4FF',
-    subjectTextColor: '#1D4ED8',
-    mode: 'Online Video',
-    date: 'Tomorrow, Mar 15',
-    time: '4:00 PM – 5:00 PM',
-    note: '"Need urgent prep for Series & Power Series convergence tests for Friday\'s midterm!"',
-    noteIconName: 'document-text-outline',
-    status: 'Pending',
-  },
-  {
-    id: '2',
-    studentName: 'Emily Watson',
-    avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
-    isOnline: true,
-    badgeType: 'star',
-    subTitle: 'College Soph. • New Student',
-    ratePerHour: 55,
-    rateLabel: 'Advanced Topic',
-    subject: 'Organic Chemistry I',
-    subjectIcon: 'flask-outline',
-    subjectBgColor: '#CCFBF1',
-    subjectTextColor: '#0F766E',
-    mode: 'Online Video',
-    date: 'Thu, Mar 16',
-    time: '6:30 PM – 7:30 PM',
-    note: '"Looking for someone to walk through SN1 vs SN2 reaction mechanisms step by step."',
-    noteIconName: 'help-circle-outline',
-    status: 'Pending',
-  },
-  {
-    id: '3',
-    studentName: 'Jason Liu',
-    avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-    isOnline: false,
-    subTitle: 'Adult Learner • Career Transition',
-    ratePerHour: 50,
-    rateLabel: 'Standard Rate',
-    subject: 'Python Data Structures',
-    subjectIcon: 'code-tags',
-    subjectBgColor: '#FEF3C7',
-    subjectTextColor: '#B45309',
-    mode: 'Online Video',
-    date: 'Sat, Mar 18',
-    time: '11:00 AM – 12:00 PM',
-    note: '"Working on binary search trees and recursion logic for upcoming coding interview."',
-    noteIconName: 'code-slash',
-    status: 'Pending',
-  },
-];
-
-const STORAGE_KEY = '@tutor_booking_requests_cache';
-
 export default function TutorBookingScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('Pending');
   const [currentBottomTab, setCurrentBottomTab] = useState<BottomTabType>('requests');
-  const [requests, setRequests] = useState<BookingRequest[]>(INITIAL_REQUESTS);
+  const [requests, setRequests] = useState<BookingRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Load cached data or fall back to initial
   useEffect(() => {
-    (async () => {
+    let mounted = true;
+    const loadRequests = async () => {
       try {
-        const cached = await AsyncStorage.getItem(STORAGE_KEY);
-        if (cached) {
-          setRequests(JSON.parse(cached));
-        }
-      } catch (e) {
-        console.error('Failed to load cached requests:', e);
+        const bookings = await getTutorBookings();
+        const profiles = await getProfilesById(bookings.map((booking) => booking.student_id));
+        if (!mounted) return;
+        setRequests(bookings
+          .filter((booking) =>
+            booking.status === 'pending' ||
+            booking.status === 'confirmed' ||
+            booking.status === 'accepted' ||
+            booking.status === 'declined'
+          )
+          .map((booking) => {
+          const student = booking.student_id ? profiles.get(booking.student_id) : undefined;
+          const subjectStyle = booking.subject.toLowerCase().includes('chem')
+            ? { subjectIcon: 'flask-outline' as const, subjectBgColor: '#CCFBF1', subjectTextColor: '#0F766E' }
+            : booking.subject.toLowerCase().includes('python') || booking.subject.toLowerCase().includes('code')
+              ? { subjectIcon: 'code-tags' as const, subjectBgColor: '#FEF3C7', subjectTextColor: '#B45309' }
+              : { subjectIcon: 'sigma' as const, subjectBgColor: '#EBF4FF', subjectTextColor: '#1D4ED8' };
+          return {
+            id: booking.id,
+            studentName: student?.full_name || booking.student_name || 'Student',
+            avatarUrl: student?.avatar_url || undefined,
+            subTitle: student?.education || 'Student',
+            ratePerHour: booking.hourly_rate == null ? null : Number(booking.hourly_rate),
+            totalPrice: booking.total_price == null ? null : Number(booking.total_price),
+            rateLabel: 'Hourly rate',
+            subject: booking.subject,
+            ...subjectStyle,
+            mode: booking.delivery_format || 'Session',
+            date: formatBookingDate(booking.session_date),
+            time: booking.time_slot,
+            note: booking.focus_notes || 'No session notes provided.',
+            noteIconName: 'document-text-outline' as const,
+            status: booking.status === 'pending' ? 'Pending' : booking.status === 'declined' ? 'Declined' : 'Accepted',
+          };
+        }));
+        setErrorMessage(null);
+      } catch (error) {
+        console.error('Failed to load tutor booking requests:', error);
+        if (mounted) setErrorMessage(error instanceof Error ? error.message : 'Unable to load booking requests.');
+      } finally {
+        if (mounted) setLoading(false);
       }
-    })();
+    };
+    void loadRequests();
+    return () => { mounted = false; };
   }, []);
 
-  const saveRequests = async (updated: BookingRequest[]) => {
-    setRequests(updated);
+  const updateRequestStatus = async (id: string, status: 'accepted' | 'declined') => {
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    } catch (e) {
-      console.error('Failed to persist requests:', e);
+      const tutorId = await getCurrentTutorId();
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('tutor_id', tutorId);
+      if (error) throw error;
+      setRequests((previous) => previous.map((item) =>
+        item.id === id ? { ...item, status: status === 'accepted' ? 'Accepted' : 'Declined' } : item
+      ));
+      Alert.alert(status === 'accepted' ? 'Session Accepted' : 'Session Declined',
+        status === 'accepted' ? 'Session has been confirmed and scheduled.' : 'Request has been declined.');
+    } catch (error) {
+      console.error('Failed to update booking status:', error);
+      Alert.alert('Update failed', error instanceof Error ? error.message : 'Unable to update this request.');
     }
-  };
-
-  const handleAccept = async (id: string) => {
-    // Supabase mutation example:
-    // await supabase.from('bookings').update({ status: 'Accepted' }).eq('id', id);
-    const updated = requests.map((item) =>
-      item.id === id ? { ...item, status: 'Accepted' as TabType } : item
-    );
-    await saveRequests(updated);
-    Alert.alert('Session Accepted', 'Session has been confirmed and scheduled.');
-  };
-
-  const handleDecline = async (id: string) => {
-    // Supabase mutation example:
-    // await supabase.from('bookings').update({ status: 'Declined' }).eq('id', id);
-    const updated = requests.map((item) =>
-      item.id === id ? { ...item, status: 'Declined' as TabType } : item
-    );
-    await saveRequests(updated);
-    Alert.alert('Session Declined', 'Request has been declined.');
   };
 
   const visibleRequests = requests.filter((r) => r.status === activeTab);
@@ -163,7 +131,7 @@ export default function TutorBookingScreen() {
   const acceptedCount = requests.filter((r) => r.status === 'Accepted').length;
   const pendingTotal = requests
     .filter((r) => r.status === 'Pending')
-    .reduce((sum, r) => sum + r.ratePerHour, 0);
+    .reduce((sum, r) => sum + (r.totalPrice ?? 0), 0);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -236,7 +204,7 @@ export default function TutorBookingScreen() {
               Accepted
             </Text>
             <View style={styles.pillBadge}>
-              <Text style={styles.pillBadgeText}>{acceptedCount > 0 ? acceptedCount : 8}</Text>
+              <Text style={styles.pillBadgeText}>{acceptedCount}</Text>
             </View>
           </TouchableOpacity>
 
@@ -252,7 +220,15 @@ export default function TutorBookingScreen() {
         </View>
 
         {/* --- Request Cards List --- */}
-        {visibleRequests.length === 0 ? (
+        {loading ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>Loading booking requests…</Text>
+          </View>
+        ) : errorMessage ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>{errorMessage}</Text>
+          </View>
+        ) : visibleRequests.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Ionicons name="mail-open-outline" size={48} color="#94A3B8" />
             <Text style={styles.emptyText}>No requests in this category</Text>
@@ -264,13 +240,13 @@ export default function TutorBookingScreen() {
               <View style={styles.cardHeader}>
                 <View style={styles.studentInfoLeft}>
                   <View style={styles.avatarWrap}>
-                    <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
-                    <View
-                      style={[
-                        styles.presenceDot,
-                        { backgroundColor: item.isOnline ? '#0D9488' : '#94A3B8' },
-                      ]}
-                    />
+                    {item.avatarUrl ? (
+                      <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+                    ) : (
+                      <View style={[styles.avatar, styles.avatarFallback]}>
+                        <Ionicons name="person" size={18} color="#64748B" />
+                      </View>
+                    )}
                   </View>
 
                   <View style={styles.nameMeta}>
@@ -279,18 +255,12 @@ export default function TutorBookingScreen() {
                         activeOpacity={0.7}
                         onPress={() =>
                           router.push(
-                            `/(tutor)/TutorBookingRequestDetails?status=${item.status.toLowerCase()}`
+                            `/(tutor)/TutorBookingRequestDetails?id=${item.id}&status=${item.status.toLowerCase()}`
                           )
                         }
                       >
                         <Text style={styles.nameText}>{item.studentName}</Text>
                       </TouchableOpacity>
-                      {item.badgeType === 'verified' && (
-                        <Ionicons name="checkmark-circle" size={17} color="#2563EB" />
-                      )}
-                      {item.badgeType === 'star' && (
-                        <MaterialCommunityIcons name="star-circle" size={18} color="#0D9488" />
-                      )}
                     </View>
                     <Text style={styles.subTitleText}>{item.subTitle}</Text>
                   </View>
@@ -298,17 +268,10 @@ export default function TutorBookingScreen() {
 
                 <View style={styles.rateBox}>
                   <Text style={styles.rateAmount}>
-                    ${item.ratePerHour}
-                    <Text style={styles.perHrText}>/hr</Text>
+                    {item.ratePerHour == null ? 'Rate not set' : `$${item.ratePerHour}`}
+                    {item.ratePerHour != null && <Text style={styles.perHrText}>/hr</Text>}
                   </Text>
-                  <Text
-                    style={[
-                      styles.rateBadgeText,
-                      { color: item.rateLabel === 'Standard Rate' ? '#059669' : '#B45309' },
-                    ]}
-                  >
-                    {item.rateLabel}
-                  </Text>
+                  {item.ratePerHour != null && <Text style={styles.rateBadgeText}>{item.rateLabel}</Text>}
                 </View>
               </View>
 
@@ -366,7 +329,7 @@ export default function TutorBookingScreen() {
                   <TouchableOpacity
                     activeOpacity={0.75}
                     style={styles.declineButton}
-                    onPress={() => handleDecline(item.id)}
+                    onPress={() => void updateRequestStatus(item.id, 'declined')}
                   >
                     <Ionicons name="close" size={18} color="#0F172A" />
                     <Text style={styles.declineText}>Decline</Text>
@@ -375,7 +338,7 @@ export default function TutorBookingScreen() {
                   <TouchableOpacity
                     activeOpacity={0.8}
                     style={styles.acceptButton}
-                    onPress={() => handleAccept(item.id)}
+                    onPress={() => void updateRequestStatus(item.id, 'accepted')}
                   >
                     <Ionicons name="checkmark" size={18} color="#FFFFFF" />
                     <Text style={styles.acceptText}>Accept Session</Text>
@@ -390,7 +353,7 @@ export default function TutorBookingScreen() {
         <TouchableOpacity
           activeOpacity={0.85}
           style={styles.pipelineBanner}
-          onPress={() => Alert.alert('Pipeline', `Total estimated pipeline: $${pendingTotal}.00`)}
+          onPress={() => Alert.alert('Pipeline', `Total estimated pipeline: $${pendingTotal.toFixed(2)}`)}
         >
           <View style={styles.pipelineLeft}>
             <View style={styles.pipelineIconBox}>
@@ -398,7 +361,7 @@ export default function TutorBookingScreen() {
             </View>
             <View>
               <Text style={styles.pipelineTitle}>Estimated Pipeline</Text>
-              <Text style={styles.pipelineSub}>Pending total: ${pendingTotal}.00</Text>
+              <Text style={styles.pipelineSub}>Pending total: ${pendingTotal.toFixed(2)}</Text>
             </View>
           </View>
           <Ionicons name="chevron-forward" size={20} color="#94A3B8" />
@@ -457,7 +420,7 @@ export default function TutorBookingScreen() {
             />
             {pendingCount > 0 && (
               <View style={styles.navRedBadge}>
-                <Text style={styles.navRedBadgeText}>2</Text>
+                <Text style={styles.navRedBadgeText}>{pendingCount}</Text>
               </View>
             )}
           </View>
@@ -697,6 +660,10 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     backgroundColor: '#E2E8F0',
+  },
+  avatarFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   presenceDot: {
     position: 'absolute',

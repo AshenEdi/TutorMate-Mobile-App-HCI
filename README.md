@@ -22,6 +22,10 @@ This is the TutorMate mobile application built with [Expo](https://expo.dev) and
    npx expo start
    ```
 
+### Supabase tutor profile fields
+
+After creating the existing Supabase tables, run `supabase_tutor_profile_fields.sql` once in the Supabase SQL editor. It adds the tutor profile fields used by the editor: phone number, location, bio, and delivery preferences.
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)

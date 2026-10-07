@@ -1,9 +1,7 @@
 import {
-    Feather,
     Ionicons,
     MaterialCommunityIcons,
 } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -19,19 +17,28 @@ import {
     View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
+import { supabase } from '../../../lib/supabase';
+import {
+  displayBookingStatus,
+  formatBookingDate,
+  getCurrentTutorId,
+  getOrCreateTutorConversation,
+  getProfilesById,
+} from '../../lib/tutorData';
 
 interface BookingRequestDetails {
   id: string;
-  status: 'pending' | 'accepted' | 'declined';
+  status: 'pending' | 'accepted' | 'declined' | 'completed' | 'cancelled';
   expiresIn: string;
   student: {
+    id: string;
     name: string;
     avatarUrl: string;
     isOnline: boolean;
     isVerified: boolean;
     gradeRole: string;
-    rating: number;
-    sessionsCount: number;
+    rating?: number;
+    sessionsCount?: number;
   };
   session: {
     duration: string;
@@ -45,93 +52,105 @@ interface BookingRequestDetails {
     hourlyRate: string;
   };
   studentNotes: string;
-  attachment: {
-    fileName: string;
-    fileSize: string;
-    uploadedAt: string;
-    fileType: 'pdf' | 'doc';
-  };
 }
 
-const DEFAULT_BOOKING_DETAILS: BookingRequestDetails = {
-  id: 'req_108',
+const EMPTY_BOOKING_DETAILS: BookingRequestDetails = {
+  id: '',
   status: 'pending',
-  expiresIn: 'Expires in 18 hrs',
+  expiresIn: '',
   student: {
-    name: 'Marcus Sterling',
-    avatarUrl:
-      'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=400&auto=format&fit=crop&q=80',
-    isOnline: true,
-    isVerified: true,
-    gradeRole: 'High School Senior • Honors Math',
-    rating: 5.0,
-    sessionsCount: 4,
+    id: '',
+    name: '',
+    avatarUrl: '',
+    isOnline: false,
+    isVerified: false,
+    gradeRole: '',
   },
   session: {
-    duration: '90 mins',
-    scheduledDate: 'Saturday, March 18, 2026',
-    scheduledTime: '3:00 PM – 4:30 PM (EDT)',
-    subject: 'AP Calculus BC',
-    subTopics: 'Integration Techniques & Polar Series',
-    delivery: 'Online 1-on-1 via Zoom',
-    deliverySubtext: 'Meeting link auto-generated on approval',
-    totalPayout: '$67.50',
-    hourlyRate: '$45.00/hr',
+    duration: '',
+    scheduledDate: '',
+    scheduledTime: '',
+    subject: '',
+    subTopics: '',
+    delivery: '',
+    deliverySubtext: '',
+    totalPayout: '',
+    hourlyRate: '',
   },
-  studentNotes:
-    '“Hi! I’m preparing for my AP mock exam next Tuesday. I really need help understanding series convergence tests and polar coordinates.”',
-  attachment: {
-    fileName: 'mock_exam_prep.pdf',
-    fileSize: '2.4 MB',
-    uploadedAt: 'Uploaded today',
-    fileType: 'pdf',
-  },
+  studentNotes: '',
 };
-
-const STORAGE_CACHE_KEY = '@booking_request_details_req_108';
 
 export default function TutorBookingRequestDetailsScreen() {
   const router = useRouter();
-  const { status: statusParam } = useLocalSearchParams<{ status?: string }>();
-  const requestStatus =
-    statusParam === 'accepted' || statusParam === 'declined' || statusParam === 'pending'
-      ? statusParam
-      : undefined;
-  const [data, setData] = useState<BookingRequestDetails>(DEFAULT_BOOKING_DETAILS);
-  const [loading, setLoading] = useState(false);
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const [data, setData] = useState<BookingRequestDetails>(EMPTY_BOOKING_DETAILS);
+  const [loading, setLoading] = useState(true);
 
-  // Load from local storage or remote Supabase backend
   useEffect(() => {
-    (async () => {
+    let mounted = true;
+    const loadBooking = async () => {
       try {
-        const cached = await AsyncStorage.getItem(STORAGE_CACHE_KEY);
-        if (cached) {
-          const cachedData = JSON.parse(cached) as BookingRequestDetails;
-          setData({ ...cachedData, status: requestStatus ?? cachedData.status });
-        } else if (requestStatus) {
-          setData({ ...DEFAULT_BOOKING_DETAILS, status: requestStatus });
-        }
-      } catch (err) {
-        console.warn('Failed to load cached booking request:', err);
+        if (!id) throw new Error('Booking ID is missing.');
+        const tutorId = await getCurrentTutorId();
+        const { data: booking, error } = await supabase
+          .from('bookings')
+          .select('*')
+          .eq('id', id)
+          .eq('tutor_id', tutorId)
+          .single();
+        if (error) throw error;
+        const profiles = await getProfilesById([booking.student_id]);
+        const student = booking.student_id ? profiles.get(booking.student_id) : undefined;
+        if (!mounted) return;
+        setData({
+          id: booking.id,
+          status: displayBookingStatus(booking.status).toLowerCase() as BookingRequestDetails['status'],
+          expiresIn: '',
+          student: {
+            id: booking.student_id || '',
+            name: student?.full_name || booking.student_name || 'Student',
+            avatarUrl: student?.avatar_url || '',
+            isOnline: false,
+            isVerified: false,
+            gradeRole: student?.education || '',
+          },
+          session: {
+            duration: booking.duration || '',
+            scheduledDate: formatBookingDate(booking.session_date),
+            scheduledTime: booking.time_slot,
+            subject: booking.subject,
+            subTopics: booking.focus_notes || '',
+            delivery: booking.delivery_format || '',
+            deliverySubtext: '',
+            totalPayout: `$${Number(booking.total_price ?? 0).toFixed(2)}`,
+            hourlyRate: `$${Number(booking.hourly_rate ?? 0).toFixed(2)}/hr`,
+          },
+          studentNotes: booking.focus_notes || '',
+        });
+      } catch (error) {
+        console.error('Failed to load booking details:', error);
+        Alert.alert('Unable to load request', error instanceof Error ? error.message : 'Please try again.');
+      } finally {
+        if (mounted) setLoading(false);
       }
-    })();
-  }, [requestStatus]);
+    };
+    void loadBooking();
+    return () => { mounted = false; };
+  }, [id]);
 
   const handleAcceptRequest = async () => {
     try {
       setLoading(true);
+      const tutorId = await getCurrentTutorId();
+      const { error } = await supabase.from('bookings')
+        .update({ status: 'accepted', updated_at: new Date().toISOString() })
+        .eq('id', data.id)
+        .eq('tutor_id', tutorId);
+      if (error) throw error;
       const updated: BookingRequestDetails = { ...data, status: 'accepted' };
       setData(updated);
-      await AsyncStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(updated));
 
-      // Supabase mutation example:
-      // const { error } = await supabase
-      //   .from('booking_requests')
-      //   .update({ status: 'accepted', updated_at: new Date().toISOString() })
-      //   .eq('id', data.id);
-      // if (error) throw error;
-
-      router.replace('/(tutor)/Sessionacceptpopup');
+      router.replace(`/(tutor)/Sessionacceptpopup?id=${encodeURIComponent(data.id)}`);
     } catch (error) {
       console.error('Accept error:', error);
       Alert.alert('Error', 'Failed to accept request. Please try again.');
@@ -150,26 +169,40 @@ export default function TutorBookingRequestDetailsScreen() {
           text: 'Decline',
           style: 'destructive',
           onPress: async () => {
-            const updated: BookingRequestDetails = { ...data, status: 'declined' };
-            setData(updated);
-            await AsyncStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(updated));
-
-            // Supabase mutation example:
-            // await supabase.from('booking_requests').update({ status: 'declined' }).eq('id', data.id);
-
-            router.replace('/(tutor)/dashboard');
+            void (async () => {
+              try {
+                const tutorId = await getCurrentTutorId();
+                const { error } = await supabase.from('bookings')
+                  .update({ status: 'declined', updated_at: new Date().toISOString() })
+                  .eq('id', data.id)
+                  .eq('tutor_id', tutorId);
+                if (error) throw error;
+                router.replace('/(tutor)/dashboard');
+              } catch (error) {
+                console.error('Failed to decline booking:', error);
+                Alert.alert('Update failed', error instanceof Error ? error.message : 'Unable to decline this request.');
+              }
+            })();
           },
         },
       ]
     );
   };
 
-  const handleDownloadAttachment = () => {
-    Alert.alert('Download', `Downloading ${data.attachment.fileName}...`);
-  };
-
-  const handleOpenChat = () => {
-    Alert.alert('Chat', `Opening direct conversation with ${data.student.name}...`);
+  const handleOpenChat = async () => {
+    if (!data.student.id) {
+      Alert.alert('Chat unavailable', 'This booking has no linked student account.');
+      return;
+    }
+    try {
+      const conversationId = await getOrCreateTutorConversation(data.student.id);
+      router.push(
+        `/(tutor)/TutorConversation?id=${encodeURIComponent(conversationId)}&studentId=${encodeURIComponent(data.student.id)}&name=${encodeURIComponent(data.student.name)}`
+      );
+    } catch (error) {
+      console.error('Failed to open tutor chat:', error);
+      Alert.alert('Chat unavailable', error instanceof Error ? error.message : 'Unable to open the conversation.');
+    }
   };
 
   return (
@@ -178,7 +211,7 @@ export default function TutorBookingRequestDetailsScreen() {
 
       {/* --- Header --- */}
       <View style={styles.header}>
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerIconButton}>
+        <TouchableOpacity activeOpacity={0.7} style={styles.headerIconButton} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#0F172A" />
         </TouchableOpacity>
 
@@ -186,7 +219,7 @@ export default function TutorBookingRequestDetailsScreen() {
           <Ionicons name="book" size={20} color="#FFFFFF" />
         </View>
 
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerProfileButton}>
+        <TouchableOpacity activeOpacity={0.7} style={styles.headerProfileButton} onPress={() => router.push('/(tutor)/TutorProfile')}>
           <Ionicons name="person" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
@@ -202,17 +235,20 @@ export default function TutorBookingRequestDetailsScreen() {
             <Text style={styles.pendingReviewText}>PENDING REVIEW</Text>
           </View>
 
-          <View style={styles.expiresRow}>
-            <MaterialCommunityIcons name="timer-sand" size={17} color="#92400E" />
-            <Text style={styles.expiresText}>{data.expiresIn}</Text>
-          </View>
+          {loading && <Text style={styles.expiresText}>Loading request…</Text>}
         </View>
 
         {/* --- Student Card --- */}
         <View style={styles.studentCard}>
           <View style={styles.studentLeftSection}>
             <View style={styles.avatarContainer}>
-              <Image source={{ uri: data.student.avatarUrl }} style={styles.avatar} />
+              {data.student.avatarUrl ? (
+                <Image source={{ uri: data.student.avatarUrl }} style={styles.avatar} />
+              ) : (
+                <View style={[styles.avatar, styles.avatarFallback]}>
+                  <Ionicons name="person" size={20} color="#64748B" />
+                </View>
+              )}
               {data.student.isOnline && <View style={styles.onlineBadge} />}
             </View>
 
@@ -231,16 +267,21 @@ export default function TutorBookingRequestDetailsScreen() {
 
               <Text style={styles.studentSubRole}>{data.student.gradeRole}</Text>
 
-              <View style={styles.ratingSessionsRow}>
-                <Ionicons name="star" size={14} color="#F59E0B" />
-                <Text style={styles.ratingText}>
-                  {data.student.rating.toFixed(1)}
-                </Text>
-                <Text style={styles.dotSeparator}>•</Text>
-                <Text style={styles.previousSessionsText}>
-                  {data.student.sessionsCount} previous sessions
-                </Text>
-              </View>
+              {(data.student.rating != null || data.student.sessionsCount != null) && (
+                <View style={styles.ratingSessionsRow}>
+                  {data.student.rating != null && (
+                    <>
+                      <Ionicons name="star" size={14} color="#F59E0B" />
+                      <Text style={styles.ratingText}>{data.student.rating.toFixed(1)}</Text>
+                    </>
+                  )}
+                  {data.student.sessionsCount != null && (
+                    <Text style={styles.previousSessionsText}>
+                      {data.student.sessionsCount} previous sessions
+                    </Text>
+                  )}
+                </View>
+              )}
             </View>
           </View>
 
@@ -300,14 +341,14 @@ export default function TutorBookingRequestDetailsScreen() {
             </View>
           </View>
 
-          {/* Item 4: Est. Payout Banner */}
+          {/* Item 4: Booking Total */}
           <View style={styles.payoutCard}>
             <View style={styles.payoutLeft}>
               <View style={styles.payoutIconWrap}>
                 <MaterialCommunityIcons name="cash-multiple" size={22} color="#2563EB" />
               </View>
               <View>
-                <Text style={styles.payoutLabel}>Your Est. Payout</Text>
+                <Text style={styles.payoutLabel}>Booking total</Text>
                 <Text style={styles.payoutAmount}>{data.session.totalPayout}</Text>
               </View>
             </View>
@@ -326,48 +367,13 @@ export default function TutorBookingRequestDetailsScreen() {
           </View>
 
           <View style={styles.quoteBubble}>
-            <Text style={styles.quoteText}>{data.studentNotes}</Text>
-          </View>
-        </View>
-
-        {/* --- Attached Materials Card --- */}
-        <View style={styles.detailsCard}>
-          <View style={styles.cardHeaderRow}>
-            <View style={styles.attachedHeaderLeft}>
-              <View style={styles.paperclipCircle}>
-                <Feather name="paperclip" size={15} color="#2563EB" />
-              </View>
-              <Text style={styles.cardSectionTitle}>Attached Materials</Text>
-            </View>
-            <Text style={styles.fileCountText}>1 File</Text>
-          </View>
-
-          <View style={styles.attachmentBox}>
-            <View style={styles.attachmentLeft}>
-              <View style={styles.pdfIconWrap}>
-                <Ionicons name="document-text" size={20} color="#EF4444" />
-              </View>
-              <View style={styles.attachmentMeta}>
-                <Text style={styles.fileName}>{data.attachment.fileName}</Text>
-                <Text style={styles.fileDetails}>
-                  {data.attachment.fileSize} • {data.attachment.uploadedAt}
-                </Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
-              style={styles.downloadButton}
-              onPress={handleDownloadAttachment}
-            >
-              <Feather name="download" size={18} color="#475569" />
-            </TouchableOpacity>
+            <Text style={styles.quoteText}>{data.studentNotes || 'No session notes provided.'}</Text>
           </View>
         </View>
 
         {/* --- Action Buttons --- */}
         <View style={styles.actionsContainer}>
-          {data.status !== 'declined' && (
+          {data.status === 'pending' && (
             <TouchableOpacity
               activeOpacity={0.8}
               style={styles.declineButton}
@@ -378,7 +384,7 @@ export default function TutorBookingRequestDetailsScreen() {
             </TouchableOpacity>
           )}
 
-          {data.status !== 'accepted' && (
+          {data.status === 'pending' && (
             <TouchableOpacity
               activeOpacity={0.85}
               style={styles.acceptButton}
@@ -513,6 +519,10 @@ const styles = StyleSheet.create({
     height: 58,
     borderRadius: 29,
     backgroundColor: '#E2E8F0',
+  },
+  avatarFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   onlineBadge: {
     position: 'absolute',
