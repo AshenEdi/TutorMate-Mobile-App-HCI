@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider, useAuth } from '../context/AuthContext';
+import { usePushNotifications } from '../hooks/usePushNotifications';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -13,6 +14,9 @@ function AppNavigator() {
   const { session, profile, loading } = useAuth();
   const router = useRouter();
   const segments = useSegments();
+
+  // Register for push notifications
+  usePushNotifications();
 
   useEffect(() => {
     if (loading) return;
