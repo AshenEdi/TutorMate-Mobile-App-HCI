@@ -19,6 +19,8 @@ import {
     View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
+import { supabase } from '../../../lib/supabase';
+import { getOrCreateConversation } from '../../lib/chat';
 
 interface BookingRequestDetails {
   id: string;
@@ -168,8 +170,41 @@ export default function TutorBookingRequestDetailsScreen() {
     Alert.alert('Download', `Downloading ${data.attachment.fileName}...`);
   };
 
-  const handleOpenChat = () => {
-    Alert.alert('Chat', `Opening direct conversation with ${data.student.name}...`);
+  const handleOpenChat = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      let targetStudentId = (data.student as any)?.id;
+
+      if (!targetStudentId && data.student.name) {
+        const { data: foundStudent } = await supabase
+          .from('profiles')
+          .select('id')
+          .or(`full_name.ilike.%${data.student.name}%,name.ilike.%${data.student.name}%`)
+          .limit(1)
+          .maybeSingle();
+        if (foundStudent) {
+          targetStudentId = foundStudent.id;
+        }
+      }
+
+      if (!targetStudentId) {
+        Alert.alert('Chat', `Connecting with ${data.student.name}...`);
+        return;
+      }
+
+      const convId = await getOrCreateConversation(targetStudentId, user.id);
+      if (convId) {
+        router.push({
+          pathname: '/(tutor)/ChatConversation' as any,
+          params: { conversationId: convId },
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to open chat:', err);
+      Alert.alert('Chat Error', 'Unable to open conversation at this moment.');
+    }
   };
 
   return (

@@ -1,5 +1,7 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
-import React, { useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useState, useEffect, useCallback } from "react";
+import { useRouter } from "expo-router";
 import {
   Image,
   Platform,
@@ -11,236 +13,240 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from "react-native";
 import { TutorBottomNav } from "../../components/TutorBottomNav";
-
-// --- TYPES ---
-export interface NavItem {
-  id: string;
-  name: string;
-  icon: string;
-  activeIcon: string;
-  badge?: number;
-}
+import { supabase } from "../../../lib/supabase";
+import { getOrCreateConversation } from "../../lib/chat";
 
 interface ActiveSessionUser {
   id: string;
+  studentId?: string;
   name: string;
   time: string;
   avatar: string;
   isOnline?: boolean;
 }
 
-interface MessageCard {
-  id: string;
-  name: string;
-  gradeSubject: string;
-  avatar?: string;
-  initials?: string;
-  time: string;
-  isReadByOther?: boolean;
-  message: string;
-  isFromYou?: boolean;
-  unreadCount?: number;
-  isOnline?: boolean;
-  attachmentBadge?: {
-    icon: string;
-    text: string;
-  };
-  statusPill?: {
-    icon: string;
-    text: string;
-    bgColor: string;
-    textColor: string;
-  };
-  scheduledTime?: string;
-  actionButton?: {
-    label: string;
-    type: "primary" | "link";
-  };
-  footerLabel?: string;
-  tagPill?: {
-    icon: string;
-    text: string;
-  };
-}
-
-// --- REUSABLE NAVBAR COMPONENT ---
-interface BottomNavBarProps {
-  activeTab: string;
-  onTabPress: (tabName: string) => void;
-}
-
-export const BottomNavBar: React.FC<BottomNavBarProps> = ({
-  activeTab,
-  onTabPress,
-}) => {
-  const navTabs: NavItem[] = [
-    { id: "1", name: "Sessions", icon: "school-outline", activeIcon: "school" },
-    {
-      id: "2",
-      name: "Calendar",
-      icon: "calendar-outline",
-      activeIcon: "calendar",
-    },
-    {
-      id: "3",
-      name: "Requests",
-      icon: "document-text-outline",
-      activeIcon: "document-text",
-      badge: 2,
-    },
-    {
-      id: "4",
-      name: "Messages",
-      icon: "chatbox-outline",
-      activeIcon: "chatbox",
-    },
-    { id: "5", name: "Profile", icon: "person-outline", activeIcon: "person" },
-  ];
-
-  return (
-    <View style={navStyles.tabBar}>
-      {navTabs.map((tab) => {
-        const isActive = activeTab === tab.name;
-        return (
-          <TouchableOpacity
-            key={tab.id}
-            style={navStyles.tabItem}
-            onPress={() => onTabPress(tab.name)}
-            activeOpacity={0.7}
-          >
-            <View style={navStyles.iconWrapper}>
-              <Ionicons
-                name={(isActive ? tab.activeIcon : tab.icon) as any}
-                size={22}
-                color={isActive ? "#0256D0" : "#9CA3AF"}
-              />
-              {tab.badge && (
-                <View style={navStyles.badge}>
-                  <Text style={navStyles.badgeText}>{tab.badge}</Text>
-                </View>
-              )}
-            </View>
-            <Text
-              style={[navStyles.tabLabel, isActive && navStyles.tabLabelActive]}
-            >
-              {tab.name}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-};
-
-// --- MOCK DATA ---
-const ACTIVE_SESSIONS: ActiveSessionUser[] = [
-  {
-    id: "1",
-    name: "Alex R.",
-    time: "3:00 PM",
-    avatar:
-      "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop",
-    isOnline: true,
-  },
-  {
-    id: "2",
-    name: "Maya L.",
-    time: "5:30 PM",
-    avatar:
-      "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop",
-    isOnline: true,
-  },
-  {
-    id: "3",
-    name: "Marcus",
-    time: "Tomorrow",
-    avatar:
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop",
-  },
-  {
-    id: "4",
-    name: "Chloe B.",
-    time: "Review",
-    avatar:
-      "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-  },
-];
-
-const RECENT_MESSAGES: MessageCard[] = [
-  {
-    id: "1",
-    name: "Alex Rivera",
-    gradeSubject: "Grade 12 • AP Calculus BC",
-    avatar:
-      "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop",
-    time: "2:28 PM",
-    isOnline: true,
-    message:
-      '"Hi Dr. Jenkins! I got stuck on question 4 on polar coordinates. Can we review that in 30 mins?"',
-    attachmentBadge: {
-      icon: "document-text-outline",
-      text: "Practice Test PDF",
-    },
-    statusPill: {
-      icon: "flash-outline",
-      text: "Starts in 32m • Room #calc-bc-882",
-      bgColor: "#CCFBF1",
-      textColor: "#0F766E",
-    },
-    unreadCount: 2,
-  },
-  {
-    id: "2",
-    name: "Maya Lin",
-    gradeSubject: "College Fresh • Multivariable Calc",
-    avatar:
-      "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop",
-    time: "1:15 PM",
-    isReadByOther: true,
-    isOnline: true,
-    message: '"Thank you for sending the partial derivatives...',
-    scheduledTime: "Today at 5:30 PM",
-    actionButton: {
-      label: "View Whiteboard →",
-      type: "link",
-    },
-  },
-  {
-    id: "3",
-    name: "Marcus Sterling",
-    gradeSubject: "Grade 11 • AP Calculus AB",
-    avatar:
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop",
-    time: "Yesterday",
-    isFromYou: true,
-    message: "You: I reviewed your practice quiz. Great job on the",
-    scheduledTime: "Tomorrow 4:00 PM",
-    footerLabel: "Homework graded",
-  },
-  {
-    id: "4",
-    name: "Jordan Taylor",
-    gradeSubject: "Parent Inquiry • SAT Math Prep",
-    initials: "JT",
-    time: "Mar 14",
-    message: '"Hi Dr. Jenkins, do you have any weekend slots for...',
-    tagPill: {
-      icon: "star-outline",
-      text: "Prospective Student",
-    },
-    actionButton: {
-      label: "Reply",
-      type: "primary",
-    },
-  },
-];
-
 // --- MAIN SCREEN ---
 export default function TutorMessagesScreen() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState("Messages");
   const [searchQuery, setSearchQuery] = useState("");
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [activeSessions, setActiveSessions] = useState<ActiveSessionUser[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchInbox = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      
+      if (user) {
+        setCurrentUserId(user.id);
+      }
+
+      // 1. Fetch today's booked sessions for this tutor
+      const now = new Date();
+      const todayYMD = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      let dbSessions: any[] = [];
+      try {
+        const { data: bData } = await supabase
+          .from("bookings")
+          .select("*")
+          .eq("tutor_id", user.id)
+          .neq("status", "cancelled");
+
+        if (bData && bData.length > 0) {
+          const todayRows = bData.filter((b: any) => {
+            const bDate = b.session_date || b.date;
+            return bDate === todayYMD;
+          });
+          dbSessions = todayRows.length > 0 ? todayRows : bData.slice(0, 8);
+        }
+      } catch (bErr) {
+        console.warn("Could not query bookings from DB:", bErr);
+      }
+
+      // Check AsyncStorage local bookings as backup
+      try {
+        const localStr = await AsyncStorage.getItem("@tutormate_booked_sessions");
+        if (localStr) {
+          const localList = JSON.parse(localStr);
+          const tutorLocal = localList.filter((b: any) => (b.tutorId === user.id || !b.tutorId) && (b.date === todayYMD || !b.date));
+          if (tutorLocal.length > 0) {
+            tutorLocal.forEach((lb: any) => {
+              if (!dbSessions.some((ds) => ds.id === lb.id || (ds.student_id === lb.studentId && ds.time_slot === lb.timeSlot))) {
+                dbSessions.push(lb);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      // Fetch student profiles for these session bookings
+      const bookingStudentIds = dbSessions
+        .map((s: any) => s.student_id || s.studentId)
+        .filter((id: any) => id && id.length > 10);
+
+      const sessionProfileMap: Record<string, any> = {};
+      if (bookingStudentIds.length > 0) {
+        const { data: sProfiles } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("id", bookingStudentIds);
+        sProfiles?.forEach((p: any) => { sessionProfileMap[p.id] = p; });
+      }
+
+      const mappedSessions: ActiveSessionUser[] = dbSessions.map((s: any, idx: number) => {
+        const sId = s.student_id || s.studentId;
+        const prof = (sId && sessionProfileMap[sId]) || {};
+        const studentName = prof.full_name || prof.name || s.student_name || s.studentName || (prof.email ? prof.email.split('@')[0] : `Student ${idx + 1}`);
+        const avatar = prof.avatar_url || s.student_avatar || s.avatarUrl || "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop";
+        const timeSlot = s.time_slot || s.timeSlot || s.time || "3:00 PM";
+        const shortTime = timeSlot.includes("–") ? timeSlot.split("–")[0].trim() : (timeSlot.includes("-") ? timeSlot.split("-")[0].trim() : timeSlot);
+
+        return {
+          id: s.id || `sess_${idx}`,
+          studentId: sId,
+          name: studentName,
+          time: shortTime,
+          avatar: avatar,
+          isOnline: true,
+        };
+      });
+
+      setActiveSessions(mappedSessions);
+
+      // 2. Fetch tutor's conversations
+      const { data: convs } = await supabase
+        .from("conversations")
+        .select("*")
+        .eq("tutor_id", user.id)
+        .order("updated_at", { ascending: false });
+        
+      if (!convs || convs.length === 0) {
+        setConversations([]);
+        setLoading(false);
+        return;
+      }
+      
+      // Fetch student profiles
+      const studentIds = convs.map((c: any) => c.student_id);
+      const { data: profiles, error: profError } = await supabase
+        .from("profiles")
+        .select("*")
+        .in("id", studentIds);
+
+      if (profError) {
+        console.warn("[TutorMessages] Error fetching profiles:", profError.message);
+      }
+        
+      const profileMap: Record<string, any> = {};
+      profiles?.forEach((p: any) => { profileMap[p.id] = p; });
+      
+      // Fetch unread counts (where user is NOT the sender)
+      const { data: unreadCounts } = await supabase
+        .from("messages")
+        .select("conversation_id")
+        .eq("is_read", false)
+        .neq("sender_id", user.id)
+        .in("conversation_id", convs.map((c: any) => c.id));
+        
+      const unreadMap: Record<string, number> = {};
+      unreadCounts?.forEach((m: any) => {
+        unreadMap[m.conversation_id] = (unreadMap[m.conversation_id] || 0) + 1;
+      });
+
+      const mapped = convs.map((c: any) => {
+        const student = profileMap[c.student_id] || {};
+        const studentName = student.full_name || student.name || (student.email ? student.email.split('@')[0] : "Student");
+        const unreadCount = unreadMap[c.id] || 0;
+        
+        return {
+          id: c.id,
+          studentId: c.student_id,
+          name: studentName,
+          gradeSubject: student.specialty || (Array.isArray(student.subjects) ? student.subjects.join(', ') : student.subjects) || "Student",
+          avatar: student.avatar_url || "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop",
+          time: new Date(c.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isOnline: true, 
+          message: c.last_message || "Started a conversation...",
+          unreadCount: unreadCount,
+        };
+      });
+      
+      setConversations(mapped);
+      setLoading(false);
+    } catch (err) {
+      console.warn("Failed to fetch tutor inbox:", err);
+      setLoading(false);
+    }
+  }, []);
+
+  const handleOpenStudentSession = async (sessionUser: ActiveSessionUser) => {
+    if (!sessionUser.studentId || !currentUserId) return;
+    try {
+      const convId = await getOrCreateConversation(sessionUser.studentId, currentUserId);
+      if (convId) {
+        router.push({
+          pathname: "/(tutor)/ChatConversation" as any,
+          params: { conversationId: convId },
+        });
+      }
+    } catch (err) {
+      console.warn("Error starting chat with session student:", err);
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadData() {
+      if (isMounted) {
+        await fetchInbox();
+      }
+    }
+
+    loadData();
+
+    // Subscribe to conversations changes to auto-update inbox
+    const channelName = `tutor_inbox_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const convChannel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "conversations" },
+        () => {
+          if (isMounted) fetchInbox();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(convChannel);
+    };
+  }, [fetchInbox]);
+
+  const handleMarkAllRead = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || conversations.length === 0) return;
+      const convIds = conversations.map(c => c.id);
+      await supabase
+        .from("messages")
+        .update({ is_read: true })
+        .in("conversation_id", convIds)
+        .neq("sender_id", user.id)
+        .eq("is_read", false);
+      setConversations(prev => prev.map(c => ({ ...c, unreadCount: 0 })));
+    } catch (e) {
+      console.warn("Failed to mark all read:", e);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -308,39 +314,55 @@ export default function TutorMessagesScreen() {
             />
             <Text style={styles.sectionTitle}>Active Sessions Today</Text>
           </View>
-          <Text style={styles.bookedText}>3 Booked</Text>
+          <Text style={styles.bookedText}>{activeSessions.length} Booked</Text>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.activeSessionsContainer}
-        >
-          {ACTIVE_SESSIONS.map((user) => (
-            <TouchableOpacity
-              key={user.id}
-              style={styles.sessionUserCard}
-              activeOpacity={0.8}
-            >
-              <View style={styles.avatarWrapper}>
-                <Image
-                  source={{ uri: user.avatar }}
-                  style={styles.sessionAvatar}
-                />
-                {user.isOnline && <View style={styles.onlineDot} />}
-              </View>
-              <Text style={styles.sessionUserName} numberOfLines={1}>
-                {user.name}
-              </Text>
-              <Text style={styles.sessionUserTime}>{user.time}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {activeSessions.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.activeSessionsContainer}
+          >
+            {activeSessions.map((user) => (
+              <TouchableOpacity
+                key={user.id}
+                style={styles.sessionUserCard}
+                activeOpacity={0.8}
+                onPress={() => handleOpenStudentSession(user)}
+              >
+                <View style={styles.avatarWrapper}>
+                  <Image
+                    source={{ uri: user.avatar }}
+                    style={styles.sessionAvatar}
+                  />
+                  {user.isOnline && <View style={styles.onlineDot} />}
+                </View>
+                <Text style={styles.sessionUserName} numberOfLines={1}>
+                  {user.name}
+                </Text>
+                <Text style={styles.sessionUserTime}>{user.time}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        ) : (
+          <View style={styles.noSessionsContainer}>
+            <Text style={styles.noSessionsText}>No active sessions scheduled for today</Text>
+          </View>
+        )}
 
         {/* --- RECENT MESSAGES --- */}
         <View style={styles.sectionHeaderBetween}>
-          <Text style={styles.sectionTitle}>Recent Messages</Text>
-          <TouchableOpacity style={styles.markReadBtn}>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <Text style={styles.sectionTitle}>Recent Messages</Text>
+            {conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0) > 0 && (
+              <View style={styles.sectionUnreadPill}>
+                <Text style={styles.sectionUnreadText}>
+                  {conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0)} new
+                </Text>
+              </View>
+            )}
+          </View>
+          <TouchableOpacity style={styles.markReadBtn} onPress={handleMarkAllRead}>
             <Text style={styles.markReadText}>Mark all read</Text>
             <Ionicons
               name="checkmark-done"
@@ -352,11 +374,30 @@ export default function TutorMessagesScreen() {
         </View>
 
         {/* MESSAGES LIST */}
-        {RECENT_MESSAGES.map((msg) => (
+        {loading && (
+          <View style={{ padding: 20, alignItems: 'center' }}>
+            <ActivityIndicator size="small" color="#2563EB" />
+          </View>
+        )}
+        {!loading && conversations.length === 0 && (
+          <View style={{ padding: 20, alignItems: 'center' }}>
+            <Text style={{ color: '#94A3B8' }}>No messages yet.</Text>
+          </View>
+        )}
+        {conversations
+          .filter((c) => !searchQuery.trim() || c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.message.toLowerCase().includes(searchQuery.toLowerCase()))
+          .map((msg) => (
           <TouchableOpacity
             key={msg.id}
-            style={styles.messageCard}
+            style={[
+              styles.messageCard,
+              msg.unreadCount > 0 && styles.unreadMessageCard,
+            ]}
             activeOpacity={0.9}
+            onPress={() => router.push({
+              pathname: "/(tutor)/ChatConversation" as any,
+              params: { conversationId: msg.id }
+            })}
           >
             {/* Header: User Info & Time */}
             <View style={styles.cardHeader}>
@@ -375,7 +416,9 @@ export default function TutorMessagesScreen() {
               </View>
 
               <View style={styles.userInfo}>
-                <Text style={styles.userName}>{msg.name}</Text>
+                <Text style={[styles.userName, msg.unreadCount > 0 && styles.unreadUserName]}>
+                  {msg.name}
+                </Text>
                 <Text style={styles.userGrade}>{msg.gradeSubject}</Text>
               </View>
 
@@ -389,13 +432,28 @@ export default function TutorMessagesScreen() {
                       style={{ marginRight: 2 }}
                     />
                   )}
-                  <Text style={styles.timeText}>{msg.time}</Text>
+                  <Text style={[styles.timeText, msg.unreadCount > 0 && styles.unreadTimeText]}>
+                    {msg.time}
+                  </Text>
                 </View>
+                {msg.unreadCount > 0 && (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadBadgeText}>
+                      {msg.unreadCount > 99 ? "99+" : msg.unreadCount}
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
 
             {/* Message Body */}
-            <Text style={styles.messageText} numberOfLines={2}>
+            <Text
+              style={[
+                styles.messageText,
+                msg.unreadCount > 0 && styles.unreadMessageText,
+              ]}
+              numberOfLines={2}
+            >
               {msg.message}
             </Text>
 
@@ -687,6 +745,21 @@ const styles = StyleSheet.create({
     color: "#2563EB",
     marginTop: 1,
   },
+  noSessionsContainer: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+    marginBottom: 16,
+    alignItems: "center",
+  },
+  noSessionsText: {
+    fontSize: 12,
+    color: "#94A3B8",
+    fontWeight: "500",
+  },
   sectionHeaderBetween: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -710,6 +783,63 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "#F1F5F9",
+  },
+  unreadMessageCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: "#2563EB",
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#2563EB",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  unreadUserName: {
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  unreadTimeText: {
+    color: "#2563EB",
+    fontWeight: "700",
+  },
+  unreadBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#2563EB",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    marginTop: 4,
+    alignSelf: "flex-end",
+  },
+  unreadBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  unreadText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  unreadMessageText: {
+    color: "#0F172A",
+    fontWeight: "700",
+  },
+  sectionUnreadPill: {
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
+  },
+  sectionUnreadText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#2563EB",
   },
   cardHeader: {
     flexDirection: "row",
@@ -835,19 +965,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     color: "#475569",
-  },
-  unreadBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#0256D0",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  unreadText: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#FFFFFF",
   },
   linkButton: {
     paddingVertical: 4,
