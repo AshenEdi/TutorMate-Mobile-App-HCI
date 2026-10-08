@@ -4,11 +4,12 @@ import {
   MaterialCommunityIcons,
 } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Image,
   Platform,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -19,193 +20,155 @@ import {
   View,
 } from "react-native";
 import { AdminBottomNav, AdminTab } from "../../components/admin";
+import { getAdminQueueItems, UnifiedQueueItem } from "../../services/adminService";
+import { createNotification } from "../../services/notificationService";
+import { deleteDispute, deleteModerationFlag } from "../../services/disputeService";
 
-interface QueueItem {
-  id: string;
-  code: string;
-  priorityText: string;
-  priorityType: "urgent" | "high" | "technical" | "medium";
-  userAvatar: string;
-  userName: string;
-  subject: string;
-  studentName: string;
-  amountOrTime?: string;
-  amountType?: "negative" | "info";
-  description: string;
-  calloutDescription?: string;
-  tags: { label: string; colorType: "peach" | "amber" | "blue" | "mint" | "teal" | "gray" }[];
-  primaryAction: {
-    label: string;
-    icon: string;
-    actionType: "dispute" | "logs" | "credit" | "ping";
-    colorType: "blue" | "green";
-  };
-  secondaryAction: {
-    label: string;
-    icon?: string;
-    actionType: "dismiss" | "warn" | "reassign";
-  };
-}
-
-const QUEUE_ITEMS: QueueItem[] = [
-  {
-    id: "1",
-    code: "#DIS-8092",
-    priorityText: "Urgent ≤ 12m left",
-    priorityType: "urgent",
-    userAvatar:
-      "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=200",
-    userName: "Alex Rivera",
-    subject: "Physics",
-    studentName: "Marcus Sterling (Gr 12)",
-    amountOrTime: "-$40.00",
-    amountType: "negative",
-    description:
-      "Student reported tutor no-show for AP Physics exam prep session on Oct 24th. Refund requested ($40.00).",
-    tags: [
-      { label: "No-Show", colorType: "peach" },
-      { label: "Refund Pending", colorType: "amber" },
-      { label: "AP Exam Track", colorType: "blue" },
-    ],
-    primaryAction: {
-      label: "Review Case",
-      icon: "shield-alert-outline",
-      actionType: "dispute",
-      colorType: "blue",
-    },
-    secondaryAction: {
-      label: "Dismiss",
-      icon: "close",
-      actionType: "dismiss",
-    },
-  },
-  {
-    id: "2",
-    code: "#CHT-4412",
-    priorityText: "High Priority",
-    priorityType: "high",
-    userAvatar:
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200",
-    userName: "David Kim",
-    subject: "Chemistry",
-    studentName: "Automated Safety Filter",
-    calloutDescription:
-      "Off-platform contact info [ personal phone number & Venmo handle ] detected in pre-booking chat.",
-    description: "",
-    tags: [
-      { label: "Safety Filter", colorType: "mint" },
-      { label: "Payment Bypass", colorType: "amber" },
-      { label: "Pre-Session", colorType: "blue" },
-    ],
-    primaryAction: {
-      label: "Inspect Logs",
-      icon: "file-document-outline",
-      actionType: "logs",
-      colorType: "blue",
-    },
-    secondaryAction: {
-      label: "Issue Warning",
-      actionType: "warn",
-    },
-  },
-  {
-    id: "3",
-    code: "#DIS-8071",
-    priorityText: "Technical Grievance",
-    priorityType: "technical",
-    userAvatar:
-      "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200",
-    userName: "Dr. Sarah Jenkins",
-    subject: "AP Calc",
-    studentName: "Liam T. • Verified Parent Acc",
-    amountOrTime: "30 min credit",
-    amountType: "info",
-    description:
-      "Technical disruption: Whiteboard froze for 25 minutes during 1-hour session. Requesting 30 min credit.",
-    tags: [
-      { label: "Tech Failure", colorType: "blue" },
-      { label: "Credit Request", colorType: "teal" },
-      { label: "WebRTC disconnect", colorType: "blue" },
-    ],
-    primaryAction: {
-      label: "Review Case",
-      icon: "shield-alert-outline",
-      actionType: "dispute",
-      colorType: "blue",
-    },
-    secondaryAction: {
-      label: "Grant Credit",
-      actionType: "credit" as any,
-    },
-  },
-  {
-    id: "4",
-    code: "#REP-7106",
-    priorityText: "Medium Priority",
-    priorityType: "medium",
-    userAvatar:
-      "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
-    userName: "Elena Rostova",
-    subject: "French Lit",
-    studentName: "Maya Alvarez",
-    description:
-      "Tutor has not responded to accepted session inquiry after 48 hours.",
-    tags: [
-      { label: "Communication", colorType: "blue" },
-      { label: ">24h Threshold", colorType: "gray" },
-    ],
-    primaryAction: {
-      label: "Ping Tutor",
-      icon: "bell-outline",
-      actionType: "ping",
-      colorType: "blue",
-    },
-    secondaryAction: {
-      label: "Reassign",
-      actionType: "reassign",
-    },
-  },
-];
+import { AlertModal, AlertType } from "../../components/ui/AlertModal";
 
 export default function AdminQueueScreen() {
   const router = useRouter();
   const [activeBottomTab, setActiveBottomTab] = useState<AdminTab>("reports");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedUrgency, setSelectedUrgency] = useState<string>("All");
+  const [queueItems, setQueueItems] = useState<UnifiedQueueItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const filteredItems = QUEUE_ITEMS.filter((item) => {
-    if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase().trim();
-    return (
-      item.code.toLowerCase().includes(query) ||
-      item.userName.toLowerCase().includes(query) ||
-      item.studentName.toLowerCase().includes(query) ||
-      item.subject.toLowerCase().includes(query)
-    );
+  // Alert Modal state
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    type: AlertType;
+    title: string;
+    message: string;
+    buttonText?: string;
+    cancelText?: string;
+    showCancel?: boolean;
+    onOk?: () => void;
+    onConfirm?: () => void;
+  }>({
+    visible: false,
+    type: "info",
+    title: "",
+    message: "",
   });
 
-  const handlePrimaryAction = (item: QueueItem) => {
+  const showMessage = (
+    title: string,
+    message: string,
+    type: AlertType = "info",
+    onOk?: () => void
+  ) => {
+    setAlertConfig({
+      visible: true,
+      type,
+      title,
+      message,
+      buttonText: "Got it",
+      showCancel: false,
+      onOk,
+    });
+  };
+
+  const loadQueue = async () => {
+    try {
+      const items = await getAdminQueueItems();
+      setQueueItems(items);
+    } catch (err) {
+      console.warn("Error loading queue items:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadQueue();
+  }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadQueue();
+  };
+
+  // Filter queue items by both search query AND urgency
+  const filteredItems = useMemo(() => {
+    return queueItems.filter((item) => {
+      // 1. Search Query filter
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase().trim();
+        const matchesQuery =
+          item.code.toLowerCase().includes(query) ||
+          item.userName.toLowerCase().includes(query) ||
+          item.studentName.toLowerCase().includes(query) ||
+          item.subject.toLowerCase().includes(query);
+
+        if (!matchesQuery) return false;
+      }
+
+      // 2. Urgency filter
+      if (selectedUrgency === "Critical" && item.priorityType !== "urgent") {
+        return false;
+      }
+      if (selectedUrgency === "High" && item.priorityType !== "high") {
+        return false;
+      }
+      if (selectedUrgency === "Medium" && item.priorityType !== "medium") {
+        return false;
+      }
+      if (selectedUrgency === "Technical" && item.priorityType !== "technical") {
+        return false;
+      }
+
+      return true;
+    });
+  }, [queueItems, searchQuery, selectedUrgency]);
+
+  const handlePrimaryAction = (item: UnifiedQueueItem) => {
     if (item.primaryAction.actionType === "dispute") {
-      router.push("/(admin)/DisputeResolution");
+      router.push({
+        pathname: "/(admin)/DisputeResolution",
+        params: { caseId: item.id, code: item.code, subject: item.subject },
+      });
     } else if (item.primaryAction.actionType === "logs") {
-      Alert.alert(
+      showMessage(
         "Chat Inspection Logs",
-        `Viewing encrypted flag log for ${item.userName}:\n\n"${item.calloutDescription}"`,
-        [{ text: "OK" }]
+        `Viewing encrypted safety flag log for ${item.userName}:\n\n"${item.calloutDescription || item.description}"`,
+        "info"
       );
     } else if (item.primaryAction.actionType === "ping") {
-      Alert.alert(
-        "Urgent Notification Sent",
-        `Automated priority notification dispatched to ${item.userName} via SMS and Push.`
+      showMessage(
+        "Priority Notification Sent",
+        `Automated priority notification dispatched to ${item.userName}.`,
+        "success"
       );
     }
   };
 
-  const handleSecondaryAction = (item: QueueItem) => {
-    Alert.alert(
-      item.secondaryAction.label,
-      `Action executed successfully for case ${item.code}.`
-    );
+  const handleSecondaryAction = (item: UnifiedQueueItem) => {
+    setAlertConfig({
+      visible: true,
+      type: "warning",
+      title: "Dismiss & Remove Case",
+      message: `Are you sure you want to remove ${item.code} (${item.userName}) from the active moderation queue?`,
+      showCancel: true,
+      cancelText: "Cancel",
+      buttonText: "Dismiss / Delete",
+      onConfirm: async () => {
+        setAlertConfig((prev) => ({ ...prev, visible: false }));
+        try {
+          if (item.kind === "dispute") {
+            await deleteDispute(item.id);
+          } else {
+            await deleteModerationFlag(item.id);
+          }
+          setQueueItems((prev) => prev.filter((q) => q.id !== item.id));
+          showMessage("Case Removed", `${item.code} was removed from the queue.`, "success");
+        } catch (err: any) {
+          showMessage("Error", err?.message || "Failed to remove case.", "error");
+        }
+      },
+    });
   };
 
   return (
@@ -217,7 +180,7 @@ export default function AdminQueueScreen() {
         <TouchableOpacity
           style={styles.backButton}
           activeOpacity={0.7}
-          onPress={() => router.back()}
+          onPress={() => router.replace("/(admin)/dashboard")}
         >
           <Ionicons name="arrow-back" size={20} color="#0052CC" />
           <Text style={styles.backButtonText}>Back</Text>
@@ -237,6 +200,7 @@ export default function AdminQueueScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* --- Sub-header Realtime Moderation Headline --- */}
         <View style={styles.headerInfoSection}>
@@ -244,7 +208,9 @@ export default function AdminQueueScreen() {
             <View style={styles.redPulseDot} />
             <Text style={styles.realtimeTagText}>REAL-TIME MODERATION</Text>
           </View>
-          <Text style={styles.queueTitleText}>Queue (14 Action Items)</Text>
+          <Text style={styles.queueTitleText}>
+            Queue ({filteredItems.length} Action {filteredItems.length === 1 ? "Item" : "Items"})
+          </Text>
         </View>
 
         {/* --- Search & Urgency Filter Row --- */}
@@ -266,13 +232,17 @@ export default function AdminQueueScreen() {
             onPress={() =>
               Alert.alert("Filter Urgency", "Sort queue by response window urgency.", [
                 { text: "All Cases", onPress: () => setSelectedUrgency("All") },
-                { text: "Critical (≤ 15m)", onPress: () => setSelectedUrgency("Critical") },
+                { text: "Critical (Urgent)", onPress: () => setSelectedUrgency("Critical") },
+                { text: "High Priority", onPress: () => setSelectedUrgency("High") },
+                { text: "Technical Grievances", onPress: () => setSelectedUrgency("Technical") },
                 { text: "Medium", onPress: () => setSelectedUrgency("Medium") },
               ])
             }
           >
             <MaterialCommunityIcons name="filter-variant" size={15} color="#0052CC" />
-            <Text style={styles.urgencyText}>Urgency ▾</Text>
+            <Text style={styles.urgencyText}>
+              {selectedUrgency === "All" ? "Urgency ▾" : `${selectedUrgency} ▾`}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -287,33 +257,43 @@ export default function AdminQueueScreen() {
                   <Text style={styles.codeText}>{item.code}</Text>
                 </View>
 
-                {item.priorityType === "urgent" && (
-                  <View style={styles.urgentBadge}>
-                    <Ionicons name="warning" size={11} color="#DC2626" />
-                    <Text style={styles.urgentBadgeText}>{item.priorityText}</Text>
-                  </View>
-                )}
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  {item.priorityType === "urgent" && (
+                    <View style={styles.urgentBadge}>
+                      <Ionicons name="warning" size={11} color="#DC2626" />
+                      <Text style={styles.urgentBadgeText}>{item.priorityText}</Text>
+                    </View>
+                  )}
 
-                {item.priorityType === "high" && (
-                  <View style={styles.highBadge}>
-                    <Ionicons name="warning-outline" size={11} color="#D97706" />
-                    <Text style={styles.highBadgeText}>{item.priorityText}</Text>
-                  </View>
-                )}
+                  {item.priorityType === "high" && (
+                    <View style={styles.highBadge}>
+                      <Ionicons name="warning-outline" size={11} color="#D97706" />
+                      <Text style={styles.highBadgeText}>{item.priorityText}</Text>
+                    </View>
+                  )}
 
-                {item.priorityType === "technical" && (
-                  <View style={styles.technicalBadge}>
-                    <Ionicons name="cog-outline" size={12} color="#0052CC" />
-                    <Text style={styles.technicalBadgeText}>{item.priorityText}</Text>
-                  </View>
-                )}
+                  {item.priorityType === "technical" && (
+                    <View style={styles.technicalBadge}>
+                      <Ionicons name="cog-outline" size={12} color="#0052CC" />
+                      <Text style={styles.technicalBadgeText}>{item.priorityText}</Text>
+                    </View>
+                  )}
 
-                {item.priorityType === "medium" && (
-                  <View style={styles.mediumBadge}>
-                    <Ionicons name="time-outline" size={11} color="#6366F1" />
-                    <Text style={styles.mediumBadgeText}>{item.priorityText}</Text>
-                  </View>
-                )}
+                  {item.priorityType === "medium" && (
+                    <View style={styles.mediumBadge}>
+                      <Ionicons name="time-outline" size={11} color="#6366F1" />
+                      <Text style={styles.mediumBadgeText}>{item.priorityText}</Text>
+                    </View>
+                  )}
+
+                  <TouchableOpacity
+                    style={styles.trashCardBtn}
+                    onPress={() => handleSecondaryAction(item)}
+                    accessibilityLabel="Delete item"
+                  >
+                    <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {/* User Avatar & Subtitle Row */}
@@ -419,17 +399,45 @@ export default function AdminQueueScreen() {
               </View>
             </View>
           ))}
+
+          {filteredItems.length === 0 && (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="shield-checkmark-outline" size={40} color="#0D9488" />
+              <Text style={styles.emptyTitle}>All Clear!</Text>
+              <Text style={styles.emptySubtitle}>
+                No pending moderation items match your active filters.
+              </Text>
+            </View>
+          )}
         </View>
       </ScrollView>
 
       {/* --- Admin Bottom Nav Component --- */}
       <AdminBottomNav
-        activeTab={activeBottomTab}
+        activeTab="reports"
         onTabPress={(tab) => {
-          setActiveBottomTab(tab);
           if (tab === "overview") {
-            router.push("/(admin)/dashboard");
+            router.replace("/(admin)/dashboard");
+          } else if (tab === "users") {
+            router.replace("/(admin)/users");
           }
+        }}
+      />
+
+      {/* --- POPUP ALERT CONFIRMATION MODAL --- */}
+      <AlertModal
+        visible={alertConfig.visible}
+        type={alertConfig.type}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        buttonText={alertConfig.buttonText}
+        cancelText={alertConfig.cancelText}
+        showCancel={alertConfig.showCancel}
+        onConfirm={alertConfig.onConfirm}
+        onClose={() => {
+          const onOkAction = alertConfig.onOk;
+          setAlertConfig((prev) => ({ ...prev, visible: false }));
+          if (onOkAction) onOkAction();
         }}
       />
     </SafeAreaView>
@@ -800,5 +808,30 @@ const styles = StyleSheet.create({
     color: "#475569",
     fontSize: 12.5,
     fontWeight: "700",
+  },
+  emptyContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 48,
+    gap: 10,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  emptySubtitle: {
+    fontSize: 13,
+    color: "#64748B",
+    textAlign: "center",
+  },
+  trashCardBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#FEE2E2",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 4,
   },
 });
