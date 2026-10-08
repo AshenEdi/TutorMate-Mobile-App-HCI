@@ -3,6 +3,7 @@ import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../../lib/supabase";
+import { AlertModal, AlertType } from "../../components/ui/AlertModal";
 import {
     ActivityIndicator,
     Alert,
@@ -42,6 +43,7 @@ interface StudentProfileData {
   education: string | null;
   avatar_url: string | null;
   wallet_balance: number | null;
+  session_credits?: number | null;
 }
 
 export default function UserProfileScreen() {
@@ -62,13 +64,32 @@ export default function UserProfileScreen() {
   const [cardholderName, setCardholderName] = useState("");
   const [processingPayment, setProcessingPayment] = useState(false);
   const [activeTab, setActiveTab] = useState("Profile");
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    type: AlertType;
+    title: string;
+    message: string;
+    onOk?: () => void;
+  }>({
+    visible: false,
+    type: "info",
+    title: "",
+    message: "",
+  });
 
-  const showMessage = (title: string, message: string) => {
-    if (Platform.OS === "web") {
-      window.alert(`${title}\n\n${message}`);
-    } else {
-      Alert.alert(title, message);
-    }
+  const showMessage = (
+    title: string,
+    message: string,
+    onOk?: () => void,
+    type: AlertType = "info"
+  ) => {
+    setAlertConfig({
+      visible: true,
+      type,
+      title,
+      message,
+      onOk,
+    });
   };
 
   const resetPaymentForm = () => {
@@ -96,13 +117,31 @@ export default function UserProfileScreen() {
       }
 
       try {
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("full_name, email, education, avatar_url, wallet_balance")
-          .eq("id", user.id)
-          .single();
-        if (error) throw error;
+        let profileData: Record<string, any> | null = null;
 
+        // Try selecting with session_credits first
+        const primaryQuery = await supabase
+          .from("profiles")
+          .select("full_name, email, education, avatar_url, wallet_balance, session_credits")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (primaryQuery.error) {
+          // Fallback if session_credits column does not exist yet
+          const fallbackQuery = await supabase
+            .from("profiles")
+            .select("full_name, email, education, avatar_url, wallet_balance")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          if (fallbackQuery.data) {
+            profileData = { ...fallbackQuery.data, session_credits: 0 };
+          }
+        } else if (primaryQuery.data) {
+          profileData = primaryQuery.data;
+        }
+
+        // Secondary metrics queries (non-fatal)
         const [
           completedSessionsResult,
           mentorsResult,
@@ -129,27 +168,23 @@ export default function UserProfileScreen() {
             .eq("student_id", user.id)
             .not("subject", "is", null),
         ]);
-        if (completedSessionsResult.error) throw completedSessionsResult.error;
-        if (mentorsResult.error) throw mentorsResult.error;
-        if (reviewsResult.error) throw reviewsResult.error;
-        if (subjectsResult.error) throw subjectsResult.error;
 
         const tutorIds = new Set(
           (mentorsResult.data ?? [])
-            .map((booking) => booking.tutor_id)
-            .filter((tutorId): tutorId is string => Boolean(tutorId)),
+            .map((booking: any) => booking.tutor_id)
+            .filter((tutorId: any): tutorId is string => Boolean(tutorId)),
         );
         const ratings = (reviewsResult.data ?? [])
-          .map((review) => Number(review.rating))
+          .map((review: any) => Number(review.rating))
           .filter(Number.isFinite);
         const averageRating = ratings.length
-          ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
+          ? ratings.reduce((sum: number, rating: number) => sum + rating, 0) / ratings.length
           : 0;
         const subjectNames = Array.from(
           new Set(
             (subjectsResult.data ?? [])
-              .map((booking) => booking.subject?.trim())
-              .filter((subject): subject is string => Boolean(subject)),
+              .map((booking: any) => booking.subject?.trim())
+              .filter((subject: any): subject is string => Boolean(subject)),
           ),
         );
         const subjectColors = [
@@ -160,10 +195,16 @@ export default function UserProfileScreen() {
         ];
 
         if (isMounted) {
-          setProfile({
-            ...data,
-            wallet_balance: data.wallet_balance == null ? 0 : Number(data.wallet_balance),
-          });
+          if (profileData) {
+            setProfile({
+              full_name: profileData.full_name || authProfile?.full_name || "",
+              email: profileData.email || user.email || "",
+              education: profileData.education || "",
+              avatar_url: profileData.avatar_url || null,
+              wallet_balance: profileData.wallet_balance == null ? 0 : Number(profileData.wallet_balance),
+              session_credits: profileData.session_credits == null ? 0 : Number(profileData.session_credits),
+            });
+          }
           setSessionsCompleted(completedSessionsResult.count ?? 0);
           setMentorCount(tutorIds.size);
           setRatingAverage(averageRating);
@@ -176,8 +217,7 @@ export default function UserProfileScreen() {
           );
         }
       } catch (error) {
-        console.error("Error fetching student profile:", error);
-        Alert.alert("Error", "Unable to load your profile.");
+        console.warn("Non-fatal notice fetching student profile:", error);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -466,6 +506,14 @@ export default function UserProfileScreen() {
 
             <View style={styles.balanceRow}>
               <Text style={styles.balanceAmount}>${(profile?.wallet_balance ?? 0).toFixed(2)}</Text>
+              {(profile?.session_credits ?? 0) > 0 ? (
+                <View style={{ backgroundColor: "#ECFDF5", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Ionicons name="gift-outline" size={14} color="#059669" />
+                  <Text style={{ fontSize: 11.5, fontWeight: "700", color: "#059669" }}>
+                    {profile?.session_credits} Free Credit{profile?.session_credits !== 1 ? "s" : ""}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -818,6 +866,19 @@ export default function UserProfileScreen() {
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* --- IN-APP ALERT MODAL --- */}
+      <AlertModal
+        visible={alertConfig.visible}
+        type={alertConfig.type}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        onClose={() => {
+          const action = alertConfig.onOk;
+          setAlertConfig((prev) => ({ ...prev, visible: false }));
+          action?.();
+        }}
+      />
     </SafeAreaView>
   );
 }

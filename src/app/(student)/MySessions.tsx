@@ -1,12 +1,11 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "../../../lib/supabase";
 import {
-  ActivityIndicator,
   Alert,
   Image,
   Platform,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -15,11 +14,12 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
-const DEFAULT_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
+import { supabase } from "../../../lib/supabase";
+import { DisputeRecord, getDisputesForStudent } from "../../services/disputeService";
 
 interface SessionItem {
   id: string;
+  tutorId?: string;
   tutorName: string;
   tutorAvatar: string;
   subject: string;
@@ -27,19 +27,22 @@ interface SessionItem {
   date: string;
   time: string;
   status: string;
-  duration: string;
-  delivery: string;
-  rating: string;
-  bookingRef: string;
-  unlockTime?: string;
+  duration?: string;
+  delivery?: string;
+  rating?: string;
   info?: string;
   features?: string;
+  bookingRef?: string;
+  dispute?: DisputeRecord;
 }
+
+const DEFAULT_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
 
 export default function MySessionsScreen() {
   const router = useRouter();
   const [sessionsList, setSessionsList] = useState<SessionItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const fetchBookings = useCallback(async () => {
     try {
@@ -53,46 +56,67 @@ export default function MySessionsScreen() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("*")
-        .eq("student_id", user.id)
-        .order("session_date", { ascending: true });
-      if (error) throw error;
+      const [bookingsRes, disputesRes] = await Promise.all([
+        supabase
+          .from("bookings")
+          .select("*")
+          .eq("student_id", user.id)
+          .order("session_date", { ascending: true }),
+        getDisputesForStudent(user.id),
+      ]);
+
+      if (bookingsRes.error) throw bookingsRes.error;
+
+      const disputesByBookingId = new Map<string, DisputeRecord>();
+      const disputesByRef = new Map<string, DisputeRecord>();
+
+      for (const d of disputesRes) {
+        if (d.booking_id) disputesByBookingId.set(d.booking_id, d);
+        if (d.booking_ref) disputesByRef.set(d.booking_ref, d);
+      }
 
       setSessionsList(
-        (data ?? []).map((booking) => ({
-          id: booking.id,
-          tutorName: booking.tutor_name || "Tutor",
-          tutorAvatar: DEFAULT_AVATAR,
-          subject: booking.subject || "Tutoring Session",
-          topic: booking.focus_notes || "Custom Tutoring Session",
-          date: booking.session_date || "",
-          time: booking.time_slot || "",
-          status: booking.status
-            ? booking.status.charAt(0).toUpperCase() + booking.status.slice(1)
-            : "Confirmed",
-          duration: booking.duration || "60 mins (1 hr)",
-          delivery: booking.delivery_format || "Interactive Video & Canvas Whiteboard",
-          rating: "5.0",
-          bookingRef: booking.booking_ref || "",
-        })),
+        (bookingsRes.data ?? []).map((booking) => {
+          const matchedDispute =
+            disputesByBookingId.get(booking.id) ||
+            (booking.booking_ref ? disputesByRef.get(booking.booking_ref) : undefined);
+
+          return {
+            id: booking.id,
+            tutorId: booking.tutor_id,
+            tutorName: booking.tutor_name || "Tutor",
+            tutorAvatar: DEFAULT_AVATAR,
+            subject: booking.subject || "Tutoring Session",
+            topic: booking.focus_notes || "Custom Tutoring Session",
+            date: booking.session_date || "",
+            time: booking.time_slot || "",
+            status: booking.status
+              ? booking.status.charAt(0).toUpperCase() + booking.status.slice(1)
+              : "Confirmed",
+            duration: booking.duration || "60 mins (1 hr)",
+            delivery: booking.delivery_format || "Interactive Video & Canvas Whiteboard",
+            rating: "5.0",
+            bookingRef: booking.booking_ref || "",
+            dispute: matchedDispute,
+          };
+        })
       );
     } catch (error) {
       console.error("Failed to fetch sessions:", error);
-      if (Platform.OS === "web") {
-        window.alert("Error\n\nUnable to load your sessions.");
-      } else {
-        Alert.alert("Error", "Unable to load your sessions.");
-      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    void Promise.resolve().then(fetchBookings);
+    fetchBookings();
   }, [fetchBookings]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchBookings();
+  };
 
   const confirmCancel = (session: SessionItem, onConfirm: () => void) => {
     const message = `Are you sure you want to cancel your session with ${session.tutorName || "the tutor"}?`;
@@ -113,26 +137,22 @@ export default function MySessionsScreen() {
         .delete()
         .eq("id", bookingId);
       if (error) {
-        if (Platform.OS === "web") {
-          window.alert(`Error\n\n${error.message}`);
-        } else {
-          Alert.alert("Error", error.message);
-        }
+        Alert.alert("Error", error.message);
         return;
       }
 
       await fetchBookings();
-      if (Platform.OS === "web") {
-        window.alert("Booking Cancelled\n\nYour session has been cancelled successfully.");
-      } else {
-        Alert.alert("Cancelled", "Your session has been cancelled.");
-      }
+      Alert.alert("Cancelled", "Your session has been cancelled.");
     } catch (error) {
       console.error("Failed to cancel booking:", error);
     }
   };
 
   const handleViewDetails = (session: SessionItem) => {
+    const disputeInfo = session.dispute
+      ? `\nDispute Status: ${session.dispute.status.toUpperCase()} (${session.dispute.code})\nReason: ${session.dispute.reason}`
+      : "";
+
     const details = `
 Tutor: ${session.tutorName || "—"}
 Subject: ${session.subject || "—"}
@@ -140,14 +160,22 @@ Date: ${session.date || "—"}
 Time: ${session.time || "—"}
 Duration: ${session.duration || "—"}
 Status: ${session.status || "—"}
-Booking Ref: ${session.bookingRef || "—"}
+Booking Ref: ${session.bookingRef || "—"}${disputeInfo}
     `.trim();
 
-    if (Platform.OS === "web") {
-      window.alert(`Session Details\n\n${details}`);
-    } else {
-      Alert.alert("Session Details", details);
-    }
+    Alert.alert("Session Details", details);
+  };
+
+  const handleOpenReport = (session: SessionItem) => {
+    router.push({
+      pathname: "/(student)/SubmitReport",
+      params: {
+        bookingId: session.id,
+        bookingRef: session.bookingRef,
+        tutorId: session.tutorId,
+        tutorName: session.tutorName,
+      },
+    });
   };
 
   const [activeTab, setActiveTab] = useState("all");
@@ -156,19 +184,19 @@ Booking Ref: ${session.bookingRef || "—"}
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const todayCount = sessionsList.filter((s) => s.date === today).length;
   const confirmedCount = sessionsList.filter((s) => s.status?.toLowerCase().includes("confirm") || s.status?.toLowerCase().includes("feature")).length;
-  const pendingCount = sessionsList.filter((s) => s.status?.toLowerCase().includes("pend")).length;
+  const disputesCount = sessionsList.filter((s) => Boolean(s.dispute)).length;
 
   const filterTabs = [
     { id: "all", label: `All (${sessionsList.length})` },
     { id: "today", label: `Today (${todayCount})` },
     { id: "confirmed", label: `Confirmed (${confirmedCount})` },
-    { id: "pending", label: `Pending (${pendingCount})` },
+    { id: "disputes", label: `Disputed (${disputesCount})` },
   ];
 
   const filteredSessions = sessionsList.filter((session) => {
     if (activeTab === "today") return session.date === today;
     if (activeTab === "confirmed") return session.status?.toLowerCase().includes("confirm") || session.status?.toLowerCase().includes("feature");
-    if (activeTab === "pending") return session.status?.toLowerCase().includes("pend");
+    if (activeTab === "disputes") return Boolean(session.dispute);
     return true;
   });
 
@@ -177,7 +205,7 @@ Booking Ref: ${session.bookingRef || "—"}
     .sort((first, second) => first.date.localeCompare(second.date));
   const featuredSession = upcomingBookings[0];
   const upcomingSessions = filteredSessions.filter(
-    (session) => session.id !== featuredSession?.id,
+    (session) => session.id !== featuredSession?.id
   );
 
   return (
@@ -200,54 +228,30 @@ Booking Ref: ${session.bookingRef || "—"}
           style={styles.profileBtn}
           onPress={() => router.push("/(student)/StudentProfile")}
         >
-          <Ionicons name="person" size={20} color="#2563EB" />
+          <Ionicons name="person" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* --- PAGE SUBHEADER --- */}
-        <View style={styles.pageHeader}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => router.push("/(student)/dashboard")}
-          >
-            <Ionicons name="arrow-back" size={20} color="#1E293B" />
-          </TouchableOpacity>
-          
-          <View style={styles.headerTitleContainer}>
-            <Text style={styles.pageTitle}>My Sessions</Text>
-            <Text style={styles.pageSubtitle}>Spring Semester • {sessionsList.length} scheduled</Text>
-          </View>
-
-          <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.actionBtn}>
-              <Ionicons name="calendar-outline" size={20} color="#64748B" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtn}>
-              <Ionicons name="options-outline" size={20} color="#64748B" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* --- FILTER TABS --- */}
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
-          style={styles.filterTabs}
-          contentContainerStyle={styles.filterTabsContent}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterScroll}
         >
           {filterTabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
               <TouchableOpacity
                 key={tab.id}
-                style={[styles.filterTab, isActive && styles.filterTabActive]}
+                style={[styles.filterChip, isActive && styles.filterChipActive]}
                 onPress={() => setActiveTab(tab.id)}
               >
-                <Text style={[styles.filterTabText, isActive && styles.filterTabTextActive]}>
+                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
                   {tab.label}
                 </Text>
               </TouchableOpacity>
@@ -255,48 +259,34 @@ Booking Ref: ${session.bookingRef || "—"}
           })}
         </ScrollView>
 
-        {loading && <ActivityIndicator size="large" color="#2563EB" />}
-
-        {/* --- EMPTY STATE --- */}
-        {!loading && sessionsList.length === 0 && (
-          <View style={styles.emptyState}>
-            <Ionicons name="calendar-outline" size={60} color="#CBD5E1" style={{ marginBottom: 16 }} />
-            <Text style={styles.emptyTitle}>No Sessions Yet</Text>
-            <Text style={styles.emptySubtitle}>When you book a session with a tutor, it will appear here.</Text>
-            <TouchableOpacity
-              style={styles.findTutorBtn}
-              onPress={() => router.push("/(student)/searchscreen")}
-            >
-              <Ionicons name="search" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
-              <Text style={styles.findTutorBtnText}>Find a Tutor</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* --- FEATURED SESSION CARD --- */}
+        {/* --- FEATURED HERO SESSION CARD --- */}
         {featuredSession && (
           <View style={styles.featuredCard}>
-            <View style={styles.featuredBadgeRow}>
-              <View style={styles.statusBadge}>
-                <View style={styles.greenDot} />
-                <Text style={styles.statusBadgeText}>
-                  {featuredSession.status?.toUpperCase() || "CONFIRMED SESSION"}
-                </Text>
+            <View style={styles.featuredTopRow}>
+              <View style={styles.statusBadgeLive}>
+                <View style={styles.pulseDot} />
+                <Text style={styles.statusTextLive}>NEXT UP</Text>
               </View>
-              <Text style={styles.unlockText}>Room unlocks {featuredSession.unlockTime || "15 mins before"}</Text>
+              <Text style={styles.refText}>REF: {featuredSession.bookingRef || "TM-8042"}</Text>
             </View>
 
-            <View style={styles.tutorRow}>
-              <View style={styles.tutorAvatarWrapper}>
-                <Image source={{ uri: featuredSession.tutorAvatar }} style={styles.tutorAvatar} />
-                <View style={styles.onlineBadge}>
-                  <Ionicons name="flash" size={8} color="#FFFFFF" />
-                </View>
+            {featuredSession.dispute ? (
+              <View style={styles.disputeBanner}>
+                <Ionicons name="warning" size={14} color="#DC2626" />
+                <Text style={styles.disputeBannerText}>
+                  {featuredSession.dispute.status === "resolved"
+                    ? `Dispute Resolved • ${featuredSession.dispute.decision?.toUpperCase()}`
+                    : `Dispute Pending (${featuredSession.dispute.code}) • Escrow Held`}
+                </Text>
               </View>
-              <View style={styles.tutorInfo}>
-                <View style={styles.nameRatingRow}>
-                  <Text style={styles.tutorName}>{featuredSession.tutorName}</Text>
-                  <View style={styles.ratingBox}>
+            ) : null}
+
+            <View style={styles.featuredTutorRow}>
+              <Image source={{ uri: featuredSession.tutorAvatar }} style={styles.featuredAvatar} />
+              <View style={styles.featuredTutorInfo}>
+                <View style={styles.nameStarRow}>
+                  <Text style={styles.featuredTutorName}>{featuredSession.tutorName}</Text>
+                  <View style={styles.ratingBadge}>
                     <Ionicons name="star" size={12} color="#D97706" />
                     <Text style={styles.ratingText}>{featuredSession.rating || "5.0"}</Text>
                   </View>
@@ -339,17 +329,22 @@ Booking Ref: ${session.bookingRef || "—"}
               >
                 <Ionicons name="chatbubble-ellipses-outline" size={22} color="#2563EB" />
               </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.reportIconBtn}
+                onPress={() => handleOpenReport(featuredSession)}
+              >
+                <Ionicons name="flag-outline" size={18} color="#DC2626" />
+              </TouchableOpacity>
             </View>
           </View>
         )}
 
-        {/* --- UPCOMING SESSIONS SECTION --- */}
+        {/* --- ALL SESSIONS LIST --- */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Coming Up This Week</Text>
-          <Text style={styles.sectionCount}>{upcomingSessions.length} session{upcomingSessions.length !== 1 ? 's' : ''}</Text>
+          <Text style={styles.sectionTitle}>Sessions</Text>
+          <Text style={styles.sectionCount}>{upcomingSessions.length} listed</Text>
         </View>
 
-        {/* --- DYNAMIC UPCOMING SESSIONS CARDS --- */}
         {upcomingSessions.map((session, idx) => {
           const isPending = session.status?.toLowerCase().includes("pend");
           return (
@@ -371,6 +366,17 @@ Booking Ref: ${session.bookingRef || "—"}
                 </View>
               </View>
 
+              {session.dispute ? (
+                <View style={styles.disputeCardBadge}>
+                  <Ionicons name="alert-circle" size={14} color="#B91C1C" />
+                  <Text style={styles.disputeCardBadgeText}>
+                    {session.dispute.status === "resolved"
+                      ? `Resolved (${session.dispute.decision?.replace(/_/g, " ").toUpperCase()})`
+                      : `Dispute Pending (${session.dispute.code})`}
+                  </Text>
+                </View>
+              ) : null}
+
               <View style={styles.cardTutorRow}>
                 <Image source={{ uri: session.tutorAvatar }} style={styles.smallAvatar} />
                 <View style={styles.cardTutorInfo}>
@@ -380,57 +386,22 @@ Booking Ref: ${session.bookingRef || "—"}
                 </View>
               </View>
 
-              {session.info ? (
-                <View style={styles.infoBox}>
-                  <Ionicons name="information-circle-outline" size={16} color="#D97706" />
-                  <Text style={styles.infoBoxText}>{session.info}</Text>
-                </View>
-              ) : (
-                <View style={styles.cardMetaRow}>
-                  <View style={styles.metaItem}>
-                    <Ionicons name="time-outline" size={14} color="#64748B" />
-                    <Text style={styles.metaText}>{session.duration || "60 mins (1 hr)"}</Text>
-                  </View>
-                  <View style={styles.metaItem}>
-                    <Ionicons name="reader-outline" size={14} color="#64748B" />
-                    <Text style={styles.metaText}>{session.features || "Digital Notebook Sharing"}</Text>
-                  </View>
-                </View>
-              )}
-
               <View style={styles.cardActions}>
-                {isPending ? (
-                  <>
-                    <TouchableOpacity
-                      style={[styles.secondaryBtn, { backgroundColor: '#FFF1F2' }]}
-                      onPress={() =>
-                        confirmCancel(session, () => handleCancelBooking(session.id))
-                      }
-                    >
-                      <Text style={[styles.secondaryBtnText, { color: '#EF4444' }]}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryBtn}>
-                      <Text style={styles.secondaryBtnText}>Edit Booking</Text>
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <>
-                    <TouchableOpacity
-                      style={[styles.secondaryBtn, { backgroundColor: '#FFF1F2' }]}
-                      onPress={() =>
-                        confirmCancel(session, () => handleCancelBooking(session.id))
-                      }
-                    >
-                      <Text style={[styles.secondaryBtnText, { color: '#EF4444' }]}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.secondaryBtn}
-                      onPress={() => handleViewDetails(session)}
-                    >
-                      <Text style={styles.secondaryBtnText}>View Details</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
+                <TouchableOpacity
+                  style={styles.secondaryBtn}
+                  onPress={() => handleViewDetails(session)}
+                >
+                  <Text style={styles.secondaryBtnText}>View Details</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.reportBtn}
+                  onPress={() => handleOpenReport(session)}
+                >
+                  <Ionicons name="flag-outline" size={13} color="#DC2626" />
+                  <Text style={styles.reportBtnText}>Dispute / Report</Text>
+                </TouchableOpacity>
+
                 <TouchableOpacity 
                   style={styles.smallChatBtn}
                   onPress={() => router.push("/(student)/ChatConversation")}
@@ -441,6 +412,14 @@ Booking Ref: ${session.bookingRef || "—"}
             </View>
           );
         })}
+
+        {filteredSessions.length === 0 && (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="calendar-outline" size={44} color="#94A3B8" />
+            <Text style={styles.emptyTitle}>No Sessions Found</Text>
+            <Text style={styles.emptySubtitle}>You have no sessions matching this tab.</Text>
+          </View>
+        )}
       </ScrollView>
 
       {/* --- BOTTOM TAB BAR --- */}
@@ -483,269 +462,244 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
   },
   brandContainer: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 10,
   },
   brandIcon: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: 8,
     backgroundColor: "#2563EB",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 10,
   },
   brandName: {
-    fontSize: 14,
-    fontWeight: "800",
+    fontSize: 11,
+    fontWeight: "700",
     color: "#2563EB",
+    letterSpacing: 0.5,
   },
   brandTitle: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: -2,
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0F172A",
   },
   profileBtn: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#2563EB",
     justifyContent: "center",
     alignItems: "center",
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 100,
+    paddingTop: 16,
+    paddingBottom: 40,
   },
-  pageHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 16,
+  filterScroll: {
+    gap: 8,
+    marginBottom: 16,
   },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#EFF6FF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
   },
-  headerTitleContainer: {
-    flex: 1,
-  },
-  pageTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#0F172A",
-  },
-  pageSubtitle: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 2,
-  },
-  headerActions: {
-    flexDirection: "row",
-  },
-  actionBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#F1F5F9",
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 8,
-  },
-  filterTabs: {
-    marginBottom: 20,
-  },
-  filterTabsContent: {
-    paddingRight: 20,
-  },
-  filterTab: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: "#F1F5F9",
-    marginRight: 8,
-  },
-  filterTabActive: {
+  filterChipActive: {
     backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
   },
-  filterTabText: {
-    fontSize: 13,
+  filterChipText: {
+    fontSize: 12.5,
     fontWeight: "600",
-    color: "#1E293B",
+    color: "#64748B",
   },
-  filterTabTextActive: {
+  filterChipTextActive: {
     color: "#FFFFFF",
+    fontWeight: "700",
   },
   featuredCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 24,
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 20,
     borderWidth: 1,
-    borderColor: "#F1F5F9",
-    shadowColor: "#2563EB",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
     elevation: 2,
+    gap: 12,
   },
-  featuredBadgeRow: {
+  featuredTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
   },
-  statusBadge: {
+  statusBadgeLive: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#ECFDF5",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    backgroundColor: "#EEF2FF",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 6,
   },
-  greenDot: {
+  pulseDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "#10B981",
-    marginRight: 6,
+    backgroundColor: "#2563EB",
   },
-  statusBadgeText: {
-    fontSize: 10,
+  statusTextLive: {
+    fontSize: 10.5,
     fontWeight: "800",
-    color: "#047857",
+    color: "#2563EB",
   },
-  unlockText: {
+  refText: {
     fontSize: 11,
-    color: "#64748B",
-    backgroundColor: "#F1F5F9",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    fontWeight: "700",
+    color: "#94A3B8",
   },
-  tutorRow: {
+  disputeBanner: {
     flexDirection: "row",
-    marginBottom: 20,
-  },
-  tutorAvatarWrapper: {
-    position: "relative",
-  },
-  tutorAvatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-  },
-  onlineBadge: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: "#0D9488",
-    justifyContent: "center",
     alignItems: "center",
-    borderWidth: 2,
-    borderColor: "#FFFFFF",
+    backgroundColor: "#FEE2E2",
+    borderRadius: 10,
+    padding: 8,
+    gap: 6,
   },
-  tutorInfo: {
+  disputeBannerText: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#DC2626",
+  },
+  featuredTutorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  featuredAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#E2E8F0",
+  },
+  featuredTutorInfo: {
     flex: 1,
-    marginLeft: 14,
+    gap: 2,
   },
-  nameRatingRow: {
+  nameStarRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-  tutorName: {
-    fontSize: 17,
-    fontWeight: "700",
+  featuredTutorName: {
+    fontSize: 15,
+    fontWeight: "800",
     color: "#0F172A",
   },
-  ratingBox: {
+  ratingBadge: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 2,
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   ratingText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
-    color: "#0F172A",
-    marginLeft: 4,
+    color: "#B45309",
   },
   featuredSubject: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600",
     color: "#2563EB",
-    marginTop: 2,
   },
   featuredTopic: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: "#64748B",
-    marginTop: 2,
   },
   dateTimeRow: {
     flexDirection: "row",
-    backgroundColor: "#EFF6FF",
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 16,
+    gap: 10,
   },
   dateTimeBox: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    padding: 10,
+    gap: 8,
   },
   dateTimeTextCol: {
-    marginLeft: 8,
+    gap: 1,
   },
   dateTimeLabel: {
     fontSize: 10,
-    color: "#64748B",
+    fontWeight: "700",
+    color: "#94A3B8",
   },
   dateTimeValue: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
-    color: "#1E293B",
+    color: "#0F172A",
   },
   deliveryRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 20,
+    gap: 6,
   },
   deliveryText: {
-    fontSize: 12,
-    color: "#64748B",
-    marginLeft: 8,
+    fontSize: 11.5,
+    color: "#0D9488",
+    fontWeight: "600",
   },
   featuredActions: {
     flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   joinBtn: {
     flex: 1,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#2563EB",
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#0256D0",
-    paddingVertical: 14,
-    borderRadius: 24,
-    marginRight: 10,
   },
   joinBtnText: {
-    fontSize: 14,
-    fontWeight: "700",
     color: "#FFFFFF",
+    fontSize: 12.5,
+    fontWeight: "700",
   },
   chatBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: "#EFF6FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  reportIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#FEF2F2",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -753,7 +707,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 12,
   },
   sectionTitle: {
     fontSize: 16,
@@ -766,198 +720,175 @@ const styles = StyleSheet.create({
   },
   sessionCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 16,
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: "#F1F5F9",
+    gap: 10,
   },
   cardTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
   },
   cardDateRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#EFF6FF",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
+    gap: 6,
   },
   cardDateText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "700",
-    color: "#2563EB",
-    marginLeft: 6,
+    color: "#0F172A",
   },
   confirmedBadge: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#ECFDF5",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    gap: 3,
   },
   confirmedBadgeText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
     color: "#059669",
-    marginLeft: 4,
   },
   pendingBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FFF7ED",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    backgroundColor: "#FFFBEB",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    gap: 3,
   },
   pendingBadgeText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
     color: "#D97706",
-    marginLeft: 4,
+  },
+  disputeCardBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF2F2",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 5,
+  },
+  disputeCardBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#DC2626",
   },
   cardTutorRow: {
     flexDirection: "row",
-    marginBottom: 12,
+    alignItems: "center",
+    gap: 10,
   },
   smallAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#E2E8F0",
   },
   cardTutorInfo: {
     flex: 1,
-    marginLeft: 12,
   },
   cardTutorName: {
-    fontSize: 15,
+    fontSize: 13.5,
     fontWeight: "700",
     color: "#0F172A",
   },
   cardSubject: {
-    fontSize: 13,
-    fontWeight: "600",
+    fontSize: 11.5,
     color: "#2563EB",
-    marginTop: 1,
+    fontWeight: "600",
   },
   cardTopic: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 2,
-  },
-  cardMetaRow: {
-    flexDirection: "row",
-    marginBottom: 16,
-  },
-  metaItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginRight: 16,
-  },
-  metaText: {
-    fontSize: 12,
-    color: "#64748B",
-    marginLeft: 6,
-  },
-  infoBox: {
-    flexDirection: "row",
-    backgroundColor: "#F8FAFC",
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  infoBoxText: {
-    flex: 1,
     fontSize: 11,
     color: "#64748B",
-    marginLeft: 8,
-    lineHeight: 16,
   },
   cardActions: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
+    marginTop: 2,
   },
   secondaryBtn: {
     flex: 1,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#F1F5F9",
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#EFF6FF",
-    paddingVertical: 10,
-    borderRadius: 20,
-    marginRight: 8,
   },
   secondaryBtnText: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#2563EB",
+    color: "#475569",
+  },
+  reportBtn: {
+    flex: 1.2,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#FEF2F2",
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 4,
+  },
+  reportBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#DC2626",
   },
   smallChatBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: "#F1F5F9",
     justifyContent: "center",
     alignItems: "center",
+  },
+  emptyContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 48,
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  emptySubtitle: {
+    fontSize: 12.5,
+    color: "#64748B",
   },
   tabBar: {
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "center",
+    paddingVertical: 8,
     backgroundColor: "#FFFFFF",
-    paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
   },
   tabItem: {
     alignItems: "center",
+    gap: 2,
   },
   tabLabel: {
-    fontSize: 10,
+    fontSize: 10.5,
     color: "#9CA3AF",
-    marginTop: 2,
+    fontWeight: "600",
   },
   tabLabelActive: {
     color: "#2563EB",
-    fontWeight: "600",
-  },
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: 60,
-    paddingHorizontal: 32,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#1E293B",
-    marginBottom: 8,
-    textAlign: "center",
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    color: "#64748B",
-    textAlign: "center",
-    lineHeight: 22,
-    marginBottom: 28,
-  },
-  findTutorBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#2563EB",
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 28,
-  },
-  findTutorBtnText: {
-    fontSize: 15,
     fontWeight: "700",
-    color: "#FFFFFF",
   },
 });

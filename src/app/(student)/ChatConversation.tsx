@@ -14,6 +14,8 @@ import {
   View,
   KeyboardAvoidingView,
 } from "react-native";
+import { inspectMessageSafety, logModerationFlag } from "../../services/moderationService";
+import { supabase } from "../../../lib/supabase";
 
 interface Message {
   id: string;
@@ -64,10 +66,34 @@ export default function ChatConversationScreen() {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [inputText, setInputText] = useState("");
+  const [safetyWarning, setSafetyWarning] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (inputText.trim() === "") return;
+
+    const safety = inspectMessageSafety(inputText);
+    if (safety.flagged) {
+      setSafetyWarning(
+        "For your security, keep communication and payments within TutorMate to protect your 100% Student Guarantee."
+      );
+
+      // Log moderation flag to Admin Queue asynchronously
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        void logModerationFlag({
+          flaggedUserId: user.id,
+          flaggedUserName: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Student',
+          subject: 'Safety Filter: Payment / Contact Bypass',
+          flagType: 'payment_bypass',
+          messageContent: inputText.trim(),
+          calloutDescription: safety.calloutDescription || 'Off-platform contact info detected in chat.',
+          priority: 'high',
+        });
+      }
+    } else {
+      setSafetyWarning(null);
+    }
 
     const newMessage: Message = {
       id: Date.now().toString(),
@@ -99,6 +125,27 @@ export default function ChatConversationScreen() {
         </View>
         <View style={{ width: 40 }} />
       </View>
+
+      {safetyWarning ? (
+        <View style={{
+          backgroundColor: '#FFFBEB',
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          borderBottomWidth: 1,
+          borderBottomColor: '#FDE68A',
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <Ionicons name="alert-circle" size={18} color="#D97706" />
+          <Text style={{ fontSize: 11.5, color: '#92400E', flex: 1, lineHeight: 16 }}>
+            {safetyWarning}
+          </Text>
+          <TouchableOpacity onPress={() => setSafetyWarning(null)}>
+            <Ionicons name="close" size={16} color="#92400E" />
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       <KeyboardAvoidingView 
         behavior={Platform.OS === "ios" ? "padding" : undefined}
