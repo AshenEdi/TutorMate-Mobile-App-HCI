@@ -18,6 +18,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { supabase } from "../../../lib/supabase";
+import { getOrCreateAdminConversation } from "../../lib/chat";
 
 type DecisionType =
   | "full_refund"
@@ -54,11 +56,33 @@ export default function DisputeResolutionScreen() {
     );
   };
 
-  const handleContactParties = () => {
-    Alert.alert(
-      "Admin Moderation Chat",
-      "Opening three-way administrative mediation thread with Marcus Sterling and Alex Rivera."
-    );
+  const handleContactParties = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        Alert.alert("Authentication Required", "Please log in as an administrator.");
+        return;
+      }
+
+      // Fetch tutor profile to initiate admin mediation conversation
+      const { data: tutorProf } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("role", "tutor")
+        .limit(1)
+        .maybeSingle();
+
+      if (tutorProf?.id) {
+        const convId = await getOrCreateAdminConversation(user.id, tutorProf.id, "tutor");
+        if (convId) {
+          router.push({ pathname: "/(admin)/ChatConversation" as any, params: { conversationId: convId } });
+          return;
+        }
+      }
+      router.push("/(admin)/ChatConversation" as any);
+    } catch {
+      router.push("/(admin)/ChatConversation" as any);
+    }
   };
 
   return (

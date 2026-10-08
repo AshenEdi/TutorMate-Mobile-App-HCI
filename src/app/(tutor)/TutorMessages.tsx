@@ -1,8 +1,9 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  Alert,
+  ActivityIndicator,
   Image,
   Platform,
   SafeAreaView,
@@ -14,248 +15,294 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { TutorBottomNav } from "../../components/TutorBottomNav";
 import { supabase } from "../../../lib/supabase";
-import { getCurrentTutorId, getProfilesById, getTutorBookings, localDateString } from "../../lib/tutorData";
-
-// --- TYPES ---
-export interface NavItem {
-  id: string;
-  name: string;
-  icon: string;
-  activeIcon: string;
-  badge?: number;
-}
+import { TutorBottomNav } from "../../components/TutorBottomNav";
+import { getOrCreateConversation } from "../../lib/chat";
 
 interface ActiveSessionUser {
   id: string;
+  studentId?: string;
   name: string;
   time: string;
   avatar: string;
   isOnline?: boolean;
 }
 
-interface MessageCard {
-  id: string;
-  conversationId: string;
-  studentId: string;
-  name: string;
-  gradeSubject: string;
-  avatar?: string;
-  initials?: string;
-  time: string;
-  isReadByOther?: boolean;
-  message: string;
-  isFromYou?: boolean;
-  unreadCount?: number;
-  isOnline?: boolean;
-  attachmentBadge?: {
-    icon: string;
-    text: string;
-  };
-  statusPill?: {
-    icon: string;
-    text: string;
-    bgColor: string;
-    textColor: string;
-  };
-  scheduledTime?: string;
-  actionButton?: {
-    label: string;
-    type: "primary" | "link";
-  };
-  footerLabel?: string;
-  tagPill?: {
-    icon: string;
-    text: string;
-  };
-}
-
-// --- REUSABLE NAVBAR COMPONENT ---
-interface BottomNavBarProps {
-  activeTab: string;
-  onTabPress: (tabName: string) => void;
-}
-
-export const BottomNavBar: React.FC<BottomNavBarProps> = ({
-  activeTab,
-  onTabPress,
-}) => {
-  const navTabs: NavItem[] = [
-    { id: "1", name: "Sessions", icon: "school-outline", activeIcon: "school" },
-    {
-      id: "2",
-      name: "Calendar",
-      icon: "calendar-outline",
-      activeIcon: "calendar",
-    },
-    {
-      id: "3",
-      name: "Requests",
-      icon: "document-text-outline",
-      activeIcon: "document-text",
-      badge: 2,
-    },
-    {
-      id: "4",
-      name: "Messages",
-      icon: "chatbox-outline",
-      activeIcon: "chatbox",
-    },
-    { id: "5", name: "Profile", icon: "person-outline", activeIcon: "person" },
-  ];
-
-  return (
-    <View style={navStyles.tabBar}>
-      {navTabs.map((tab) => {
-        const isActive = activeTab === tab.name;
-        return (
-          <TouchableOpacity
-            key={tab.id}
-            style={navStyles.tabItem}
-            onPress={() => onTabPress(tab.name)}
-            activeOpacity={0.7}
-          >
-            <View style={navStyles.iconWrapper}>
-              <Ionicons
-                name={(isActive ? tab.activeIcon : tab.icon) as any}
-                size={22}
-                color={isActive ? "#0256D0" : "#9CA3AF"}
-              />
-              {tab.badge && (
-                <View style={navStyles.badge}>
-                  <Text style={navStyles.badgeText}>{tab.badge}</Text>
-                </View>
-              )}
-            </View>
-            <Text
-              style={[navStyles.tabLabel, isActive && navStyles.tabLabelActive]}
-            >
-              {tab.name}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-}
-
 // --- MAIN SCREEN ---
 export default function TutorMessagesScreen() {
   const router = useRouter();
+  const [activeTab, setActiveTab] = useState("Messages");
   const [searchQuery, setSearchQuery] = useState("");
+  const [conversations, setConversations] = useState<any[]>([]);
   const [activeSessions, setActiveSessions] = useState<ActiveSessionUser[]>([]);
-  const [recentMessages, setRecentMessages] = useState<MessageCard[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    let mounted = true;
-    const loadTutorMessages = async () => {
-      try {
-        const tutorId = await getCurrentTutorId();
-        const [{ data: conversations, error: conversationError }, bookings] = await Promise.all([
-          supabase.from("conversations")
-            .select("id, student_id, updated_at")
-            .eq("tutor_id", tutorId)
-            .order("updated_at", { ascending: false }),
-          getTutorBookings(),
-        ]);
-        if (conversationError) throw conversationError;
-        const conversationRows = conversations ?? [];
-        const profiles = await getProfilesById([
-          ...conversationRows.map((conversation) => conversation.student_id),
-          ...bookings.map((booking) => booking.student_id),
-        ]);
-        const conversationIds = conversationRows.map((conversation) => conversation.id);
-        const { data: messages, error: messagesError } = conversationIds.length
-          ? await supabase.from("messages")
-              .select("id, conversation_id, sender_id, content, is_read, created_at")
-              .in("conversation_id", conversationIds)
-              .order("created_at", { ascending: false })
-          : { data: [], error: null };
-        if (messagesError) throw messagesError;
-        if (!mounted) return;
+  const fetchInbox = useCallback(async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
 
-        const latestByConversation = new Map<string, { id: string; conversation_id: string; sender_id: string; content: string; is_read: boolean | null; created_at: string }>();
-        const unreadByConversation = new Map<string, number>();
-        (messages ?? []).forEach((message) => {
-          if (!latestByConversation.has(message.conversation_id)) {
-            latestByConversation.set(message.conversation_id, message);
-          }
-          if (message.sender_id !== tutorId && !message.is_read) {
-            unreadByConversation.set(
-              message.conversation_id,
-              (unreadByConversation.get(message.conversation_id) ?? 0) + 1
-            );
-          }
-        });
-        setRecentMessages(conversationRows.flatMap((conversation) => {
-          const latest = latestByConversation.get(conversation.id);
-          const student = profiles.get(conversation.student_id);
-          if (!latest || !student) return [];
-          return [{
-            id: latest.id,
-            conversationId: conversation.id,
-            studentId: conversation.student_id,
-            name: student.full_name,
-            gradeSubject: student.education || student.specialty || "Student",
-            avatar: student.avatar_url || undefined,
-            time: new Date(latest.created_at).toLocaleString(),
-            message: latest.content,
-            isFromYou: latest.sender_id === tutorId,
-            unreadCount: unreadByConversation.get(conversation.id),
-          }];
-        }));
-        const today = localDateString();
-        setActiveSessions(bookings
-          .filter((booking) => booking.session_date === today &&
-            (booking.status === "accepted" || booking.status === "confirmed"))
-          .map((booking) => {
-            const student = booking.student_id ? profiles.get(booking.student_id) : undefined;
-            return {
-              id: booking.id,
-              name: student?.full_name || booking.student_name || "Student",
-              time: booking.time_slot,
-              avatar: student?.avatar_url || "",
-            };
-          }));
-        setErrorMessage(null);
-      } catch (error) {
-        console.error("Failed to load tutor messages:", error);
-        if (mounted) setErrorMessage(error instanceof Error ? error.message : "Unable to load messages.");
-      } finally {
-        if (mounted) setLoading(false);
+      if (user) {
+        setCurrentUserId(user.id);
       }
-    };
-    void loadTutorMessages();
-    return () => { mounted = false; };
+
+      // 1. Fetch today's booked sessions for this tutor
+      const now = new Date();
+      const todayYMD = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+      let dbSessions: any[] = [];
+      try {
+        const { data: bData } = await supabase
+          .from("bookings")
+          .select("*")
+          .eq("tutor_id", user.id)
+          .neq("status", "cancelled");
+
+        if (bData && bData.length > 0) {
+          const todayRows = bData.filter((b: any) => {
+            const bDate = b.session_date || b.date;
+            return bDate === todayYMD;
+          });
+          dbSessions = todayRows.length > 0 ? todayRows : bData.slice(0, 8);
+        }
+      } catch (bErr) {
+        console.warn("Could not query bookings from DB:", bErr);
+      }
+
+      // Check AsyncStorage local bookings as backup
+      try {
+        const localStr = await AsyncStorage.getItem(
+          "@tutormate_booked_sessions",
+        );
+        if (localStr) {
+          const localList = JSON.parse(localStr);
+          const tutorLocal = localList.filter(
+            (b: any) =>
+              (b.tutorId === user.id || !b.tutorId) &&
+              (b.date === todayYMD || !b.date),
+          );
+          if (tutorLocal.length > 0) {
+            tutorLocal.forEach((lb: any) => {
+              if (
+                !dbSessions.some(
+                  (ds) =>
+                    ds.id === lb.id ||
+                    (ds.student_id === lb.studentId &&
+                      ds.time_slot === lb.timeSlot),
+                )
+              ) {
+                dbSessions.push(lb);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      // Fetch student profiles for these session bookings
+      const bookingStudentIds = dbSessions
+        .map((s: any) => s.student_id || s.studentId)
+        .filter((id: any) => id && id.length > 10);
+
+      const sessionProfileMap: Record<string, any> = {};
+      if (bookingStudentIds.length > 0) {
+        const { data: sProfiles } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("id", bookingStudentIds);
+        sProfiles?.forEach((p: any) => {
+          sessionProfileMap[p.id] = p;
+        });
+      }
+
+      const mappedSessions: ActiveSessionUser[] = dbSessions.map(
+        (s: any, idx: number) => {
+          const sId = s.student_id || s.studentId;
+          const prof = (sId && sessionProfileMap[sId]) || {};
+          const studentName =
+            prof.full_name ||
+            prof.name ||
+            s.student_name ||
+            s.studentName ||
+            (prof.email ? prof.email.split("@")[0] : `Student ${idx + 1}`);
+          const avatar =
+            prof.avatar_url ||
+            s.student_avatar ||
+            s.avatarUrl ||
+            "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop";
+          const timeSlot = s.time_slot || s.timeSlot || s.time || "3:00 PM";
+          const shortTime = timeSlot.includes("–")
+            ? timeSlot.split("–")[0].trim()
+            : timeSlot.includes("-")
+              ? timeSlot.split("-")[0].trim()
+              : timeSlot;
+
+          return {
+            id: s.id || `sess_${idx}`,
+            studentId: sId,
+            name: studentName,
+            time: shortTime,
+            avatar: avatar,
+            isOnline: true,
+          };
+        },
+      );
+
+      setActiveSessions(mappedSessions);
+
+      // 2. Fetch tutor's conversations
+      const { data: convs } = await supabase
+        .from("conversations")
+        .select("*")
+        .eq("tutor_id", user.id)
+        .order("updated_at", { ascending: false });
+
+      if (!convs || convs.length === 0) {
+        setConversations([]);
+        setLoading(false);
+        return;
+      }
+
+      // Fetch student profiles
+      const studentIds = convs.map((c: any) => c.student_id);
+      const { data: profiles, error: profError } = await supabase
+        .from("profiles")
+        .select("*")
+        .in("id", studentIds);
+
+      if (profError) {
+        console.warn(
+          "[TutorMessages] Error fetching profiles:",
+          profError.message,
+        );
+      }
+
+      const profileMap: Record<string, any> = {};
+      profiles?.forEach((p: any) => {
+        profileMap[p.id] = p;
+      });
+
+      // Fetch unread counts (where user is NOT the sender)
+      const { data: unreadCounts } = await supabase
+        .from("messages")
+        .select("conversation_id")
+        .eq("is_read", false)
+        .neq("sender_id", user.id)
+        .in(
+          "conversation_id",
+          convs.map((c: any) => c.id),
+        );
+
+      const unreadMap: Record<string, number> = {};
+      unreadCounts?.forEach((m: any) => {
+        unreadMap[m.conversation_id] = (unreadMap[m.conversation_id] || 0) + 1;
+      });
+
+      const mapped = convs.map((c: any) => {
+        const student = profileMap[c.student_id] || {};
+        const studentName =
+          student.full_name ||
+          student.name ||
+          (student.email ? student.email.split("@")[0] : "Student");
+        const unreadCount = unreadMap[c.id] || 0;
+
+        return {
+          id: c.id,
+          studentId: c.student_id,
+          name: studentName,
+          gradeSubject:
+            student.specialty ||
+            (Array.isArray(student.subjects)
+              ? student.subjects.join(", ")
+              : student.subjects) ||
+            "Student",
+          avatar:
+            student.avatar_url ||
+            "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop",
+          time: new Date(c.updated_at).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          isOnline: true,
+          message: c.last_message || "Started a conversation...",
+          unreadCount: unreadCount,
+        };
+      });
+
+      setConversations(mapped);
+      setLoading(false);
+    } catch (err) {
+      console.warn("Failed to fetch tutor inbox:", err);
+      setLoading(false);
+    }
   }, []);
 
-  const filteredMessages = useMemo(
-    () => recentMessages.filter((message) =>
-      `${message.name} ${message.gradeSubject} ${message.message}`
-        .toLowerCase().includes(searchQuery.toLowerCase())
-    ),
-    [recentMessages, searchQuery]
-  );
-
-  const markAllRead = async () => {
+  const handleOpenStudentSession = async (sessionUser: ActiveSessionUser) => {
+    if (!sessionUser.studentId || !currentUserId) return;
     try {
-      const tutorId = await getCurrentTutorId();
-      const conversationIds = recentMessages
-        .filter((message) => message.unreadCount)
-        .map((message) => message.conversationId);
-      if (!conversationIds.length) return;
-      const { error } = await supabase.from("messages")
+      const convId = await getOrCreateConversation(
+        sessionUser.studentId,
+        currentUserId,
+      );
+      if (convId) {
+        router.push({
+          pathname: "/(tutor)/ChatConversation" as any,
+          params: { conversationId: convId },
+        });
+      }
+    } catch (err) {
+      console.warn("Error starting chat with session student:", err);
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadData() {
+      if (isMounted) {
+        await fetchInbox();
+      }
+    }
+
+    loadData();
+
+    // Subscribe to conversations changes to auto-update inbox
+    const channelName = `tutor_inbox_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const convChannel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "conversations" },
+        () => {
+          if (isMounted) fetchInbox();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(convChannel);
+    };
+  }, [fetchInbox]);
+
+  const handleMarkAllRead = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || conversations.length === 0) return;
+      const convIds = conversations.map((c) => c.id);
+      await supabase
+        .from("messages")
         .update({ is_read: true })
-        .in("conversation_id", conversationIds)
-        .neq("sender_id", tutorId);
-      if (error) throw error;
-      setRecentMessages((current) => current.map((message) => ({ ...message, unreadCount: 0 })));
-    } catch (error) {
-      console.error("Failed to mark tutor messages as read:", error);
-      Alert.alert("Update failed", error instanceof Error ? error.message : "Unable to update read status.");
+        .in("conversation_id", convIds)
+        .neq("sender_id", user.id)
+        .eq("is_read", false);
+      setConversations((prev) => prev.map((c) => ({ ...c, unreadCount: 0 })));
+    } catch (e) {
+      console.warn("Failed to mark all read:", e);
     }
   };
 
@@ -272,10 +319,13 @@ export default function TutorMessagesScreen() {
           <Text style={styles.brandTitle}>TutorMate</Text>
         </View>
 
-        <Text style={styles.headerSubtitle}>Tutor Messages</Text>
-
         <TouchableOpacity style={styles.profileAvatar}>
-          <Ionicons name="person" size={19} color="#FFFFFF" />
+          <Image
+            source={{
+              uri: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+            }}
+            style={styles.avatarImg}
+          />
         </TouchableOpacity>
       </View>
 
@@ -303,10 +353,6 @@ export default function TutorMessagesScreen() {
               <Feather name="mic" size={16} color="#64748B" />
             </TouchableOpacity>
           </View>
-
-          <TouchableOpacity style={styles.filterButton}>
-            <Ionicons name="options-outline" size={18} color="#0256D0" />
-          </TouchableOpacity>
         </View>
 
         {/* --- ACTIVE SESSIONS TODAY --- */}
@@ -323,38 +369,62 @@ export default function TutorMessagesScreen() {
           <Text style={styles.bookedText}>{activeSessions.length} Booked</Text>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.activeSessionsContainer}
-        >
-          {activeSessions.map((user) => (
-            <TouchableOpacity
-              key={user.id}
-              style={styles.sessionUserCard}
-              activeOpacity={0.8}
-            >
-              <View style={styles.avatarWrapper}>
-                {user.avatar ? (
-                  <Image source={{ uri: user.avatar }} style={styles.sessionAvatar} />
-                ) : (
-                  <View style={[styles.sessionAvatar, styles.avatarFallback]}>
-                    <Ionicons name="person" size={18} color="#64748B" />
-                  </View>
-                )}
-              </View>
-              <Text style={styles.sessionUserName} numberOfLines={1}>
-                {user.name}
-              </Text>
-              <Text style={styles.sessionUserTime}>{user.time}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {activeSessions.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.activeSessionsContainer}
+          >
+            {activeSessions.map((user) => (
+              <TouchableOpacity
+                key={user.id}
+                style={styles.sessionUserCard}
+                activeOpacity={0.8}
+                onPress={() => handleOpenStudentSession(user)}
+              >
+                <View style={styles.avatarWrapper}>
+                  <Image
+                    source={{ uri: user.avatar }}
+                    style={styles.sessionAvatar}
+                  />
+                  {user.isOnline && <View style={styles.onlineDot} />}
+                </View>
+                <Text style={styles.sessionUserName} numberOfLines={1}>
+                  {user.name}
+                </Text>
+                <Text style={styles.sessionUserTime}>{user.time}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        ) : (
+          <View style={styles.noSessionsContainer}>
+            <Text style={styles.noSessionsText}>
+              No active sessions scheduled for today
+            </Text>
+          </View>
+        )}
 
         {/* --- RECENT MESSAGES --- */}
         <View style={styles.sectionHeaderBetween}>
-          <Text style={styles.sectionTitle}>Recent Messages</Text>
-          <TouchableOpacity style={styles.markReadBtn} onPress={() => void markAllRead()}>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <Text style={styles.sectionTitle}>Recent Messages</Text>
+            {conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0) >
+              0 && (
+              <View style={styles.sectionUnreadPill}>
+                <Text style={styles.sectionUnreadText}>
+                  {conversations.reduce(
+                    (sum, c) => sum + (c.unreadCount || 0),
+                    0,
+                  )}{" "}
+                  new
+                </Text>
+              </View>
+            )}
+          </View>
+          <TouchableOpacity
+            style={styles.markReadBtn}
+            onPress={handleMarkAllRead}
+          >
             <Text style={styles.markReadText}>Mark all read</Text>
             <Ionicons
               name="checkmark-done"
@@ -366,151 +436,198 @@ export default function TutorMessagesScreen() {
         </View>
 
         {/* MESSAGES LIST */}
-        {loading ? (
-          <Text style={styles.emptyText}>Loading messages…</Text>
-        ) : errorMessage ? (
-          <Text style={styles.emptyText}>{errorMessage}</Text>
-        ) : filteredMessages.length === 0 ? (
-          <Text style={styles.emptyText}>No conversations yet</Text>
-        ) : filteredMessages.map((msg) => (
-          <TouchableOpacity
-            key={msg.id}
-            style={styles.messageCard}
-            activeOpacity={0.9}
-            onPress={() => router.push(
-              `/(tutor)/TutorConversation?id=${encodeURIComponent(msg.conversationId)}&studentId=${encodeURIComponent(msg.studentId)}&name=${encodeURIComponent(msg.name)}`
-            )}
-          >
-            {/* Header: User Info & Time */}
-            <View style={styles.cardHeader}>
-              <View style={styles.avatarWrapper}>
-                {msg.avatar ? (
-                  <Image
-                    source={{ uri: msg.avatar }}
-                    style={styles.msgAvatar}
-                  />
-                ) : (
-                  <View style={styles.initialsAvatar}>
-                    <Ionicons name="person" size={18} color="#64748B" />
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.userInfo}>
-                <Text style={styles.userName}>{msg.name}</Text>
-                <Text style={styles.userGrade}>{msg.gradeSubject}</Text>
-              </View>
-
-              <View style={styles.timeContainer}>
-                <View style={styles.timeRow}>
-                  {msg.isReadByOther && (
-                    <Ionicons
-                      name="checkmark-done"
-                      size={14}
-                      color="#2563EB"
-                      style={{ marginRight: 2 }}
+        {loading && (
+          <View style={{ padding: 20, alignItems: "center" }}>
+            <ActivityIndicator size="small" color="#2563EB" />
+          </View>
+        )}
+        {!loading && conversations.length === 0 && (
+          <View style={{ padding: 20, alignItems: "center" }}>
+            <Text style={{ color: "#94A3B8" }}>No messages yet.</Text>
+          </View>
+        )}
+        {conversations
+          .filter(
+            (c) =>
+              !searchQuery.trim() ||
+              c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              c.message.toLowerCase().includes(searchQuery.toLowerCase()),
+          )
+          .map((msg) => (
+            <TouchableOpacity
+              key={msg.id}
+              style={[
+                styles.messageCard,
+                msg.unreadCount > 0 && styles.unreadMessageCard,
+              ]}
+              activeOpacity={0.9}
+              onPress={() =>
+                router.push({
+                  pathname: "/(tutor)/ChatConversation" as any,
+                  params: { conversationId: msg.id },
+                })
+              }
+            >
+              {/* Header: User Info & Time */}
+              <View style={styles.cardHeader}>
+                <View style={styles.avatarWrapper}>
+                  {msg.avatar ? (
+                    <Image
+                      source={{ uri: msg.avatar }}
+                      style={styles.msgAvatar}
                     />
+                  ) : (
+                    <View style={styles.initialsAvatar}>
+                      <Text style={styles.initialsText}>{msg.initials}</Text>
+                    </View>
                   )}
-                  <Text style={styles.timeText}>{msg.time}</Text>
+                  {msg.isOnline && <View style={styles.onlineDotMsg} />}
                 </View>
-              </View>
-            </View>
 
-            {/* Message Body */}
-            <Text style={styles.messageText} numberOfLines={2}>
-              {msg.message}
-            </Text>
-
-            {/* Attachment Badge */}
-            {msg.attachmentBadge && (
-              <View style={styles.attachmentPill}>
-                <Ionicons
-                  name={msg.attachmentBadge.icon as any}
-                  size={14}
-                  color="#2563EB"
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={styles.attachmentText}>
-                  {msg.attachmentBadge.text}
-                </Text>
-              </View>
-            )}
-
-            {/* Tag Pill for Prospective Student */}
-            {msg.tagPill && (
-              <View style={styles.tagPill}>
-                <Ionicons
-                  name={msg.tagPill.icon as any}
-                  size={12}
-                  color="#475569"
-                  style={{ marginRight: 4 }}
-                />
-                <Text style={styles.tagPillText}>{msg.tagPill.text}</Text>
-              </View>
-            )}
-
-            {/* Card Footer Actions */}
-            <View style={styles.cardFooter}>
-              {/* Left Side Pill / Time */}
-              {msg.statusPill ? (
-                <View
-                  style={[
-                    styles.statusPill,
-                    { backgroundColor: msg.statusPill.bgColor },
-                  ]}
-                >
-                  <Ionicons
-                    name={msg.statusPill.icon as any}
-                    size={12}
-                    color={msg.statusPill.textColor}
-                    style={{ marginRight: 4 }}
-                  />
+                <View style={styles.userInfo}>
                   <Text
                     style={[
-                      styles.statusPillText,
-                      { color: msg.statusPill.textColor },
+                      styles.userName,
+                      msg.unreadCount > 0 && styles.unreadUserName,
                     ]}
                   >
-                    {msg.statusPill.text}
+                    {msg.name}
+                  </Text>
+                  <Text style={styles.userGrade}>{msg.gradeSubject}</Text>
+                </View>
+
+                <View style={styles.timeContainer}>
+                  <View style={styles.timeRow}>
+                    {msg.isReadByOther && (
+                      <Ionicons
+                        name="checkmark-done"
+                        size={14}
+                        color="#2563EB"
+                        style={{ marginRight: 2 }}
+                      />
+                    )}
+                    <Text
+                      style={[
+                        styles.timeText,
+                        msg.unreadCount > 0 && styles.unreadTimeText,
+                      ]}
+                    >
+                      {msg.time}
+                    </Text>
+                  </View>
+                  {msg.unreadCount > 0 && (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadBadgeText}>
+                        {msg.unreadCount > 99 ? "99+" : msg.unreadCount}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {/* Message Body */}
+              <Text
+                style={[
+                  styles.messageText,
+                  msg.unreadCount > 0 && styles.unreadMessageText,
+                ]}
+                numberOfLines={2}
+              >
+                {msg.message}
+              </Text>
+
+              {/* Attachment Badge */}
+              {msg.attachmentBadge && (
+                <View style={styles.attachmentPill}>
+                  <Ionicons
+                    name={msg.attachmentBadge.icon as any}
+                    size={14}
+                    color="#2563EB"
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={styles.attachmentText}>
+                    {msg.attachmentBadge.text}
                   </Text>
                 </View>
-              ) : msg.scheduledTime ? (
-                <View style={styles.scheduledPill}>
-                  <Ionicons
-                    name="calendar-outline"
-                    size={12}
-                    color="#64748B"
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text style={styles.scheduledText}>{msg.scheduledTime}</Text>
-                </View>
-              ) : (
-                <View />
               )}
 
-              {/* Right Side Actions / Unread Badges */}
-              {msg.unreadCount ? (
-                <View style={styles.unreadBadge}>
-                  <Text style={styles.unreadText}>{msg.unreadCount}</Text>
+              {/* Tag Pill for Prospective Student */}
+              {msg.tagPill && (
+                <View style={styles.tagPill}>
+                  <Ionicons
+                    name={msg.tagPill.icon as any}
+                    size={12}
+                    color="#475569"
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={styles.tagPillText}>{msg.tagPill.text}</Text>
                 </View>
-              ) : msg.actionButton?.type === "link" ? (
-                <TouchableOpacity style={styles.linkButton}>
-                  <Text style={styles.linkButtonText}>
-                    {msg.actionButton.label}
-                  </Text>
-                </TouchableOpacity>
-              ) : msg.actionButton?.type === "primary" ? (
-                <TouchableOpacity style={styles.primaryReplyBtn}>
-                  <Text style={styles.primaryReplyText}>
-                    {msg.actionButton.label}
-                  </Text>
-                </TouchableOpacity>
-              ) : msg.footerLabel ? (
-                <Text style={styles.footerLabelText}>{msg.footerLabel}</Text>
-              ) : null}
-            </View>
-          </TouchableOpacity>
-        ))}
+              )}
+
+              {/* Card Footer Actions */}
+              <View style={styles.cardFooter}>
+                {/* Left Side Pill / Time */}
+                {msg.statusPill ? (
+                  <View
+                    style={[
+                      styles.statusPill,
+                      { backgroundColor: msg.statusPill.bgColor },
+                    ]}
+                  >
+                    <Ionicons
+                      name={msg.statusPill.icon as any}
+                      size={12}
+                      color={msg.statusPill.textColor}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text
+                      style={[
+                        styles.statusPillText,
+                        { color: msg.statusPill.textColor },
+                      ]}
+                    >
+                      {msg.statusPill.text}
+                    </Text>
+                  </View>
+                ) : msg.scheduledTime ? (
+                  <View style={styles.scheduledPill}>
+                    <Ionicons
+                      name="calendar-outline"
+                      size={12}
+                      color="#64748B"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={styles.scheduledText}>
+                      {msg.scheduledTime}
+                    </Text>
+                  </View>
+                ) : (
+                  <View />
+                )}
+
+                {/* Right Side Actions / Unread Badges */}
+                {msg.unreadCount ? (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadText}>{msg.unreadCount}</Text>
+                  </View>
+                ) : msg.actionButton?.type === "link" ? (
+                  <TouchableOpacity style={styles.linkButton}>
+                    <Text style={styles.linkButtonText}>
+                      {msg.actionButton.label}
+                    </Text>
+                  </TouchableOpacity>
+                ) : msg.actionButton?.type === "primary" ? (
+                  <TouchableOpacity style={styles.primaryReplyBtn}>
+                    <Text style={styles.primaryReplyText}>
+                      {msg.actionButton.label}
+                    </Text>
+                  </TouchableOpacity>
+                ) : msg.footerLabel ? (
+                  <Text style={styles.footerLabelText}>{msg.footerLabel}</Text>
+                ) : null}
+              </View>
+            </TouchableOpacity>
+          ))}
       </ScrollView>
 
       {/* --- REUSABLE BOTTOM NAVBAR --- */}
@@ -604,9 +721,7 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#2563EB",
+    overflow: "hidden",
   },
   avatarImg: {
     width: "100%",
@@ -690,16 +805,6 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: 18,
   },
-  avatarFallback: {
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#E2E8F0",
-  },
-  emptyText: {
-    paddingVertical: 24,
-    color: "#64748B",
-    textAlign: "center",
-  },
   onlineDot: {
     position: "absolute",
     top: -2,
@@ -720,6 +825,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#2563EB",
     marginTop: 1,
+  },
+  noSessionsContainer: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+    marginBottom: 16,
+    alignItems: "center",
+  },
+  noSessionsText: {
+    fontSize: 12,
+    color: "#94A3B8",
+    fontWeight: "500",
   },
   sectionHeaderBetween: {
     flexDirection: "row",
@@ -744,6 +864,63 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "#F1F5F9",
+  },
+  unreadMessageCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: "#2563EB",
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#2563EB",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  unreadUserName: {
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  unreadTimeText: {
+    color: "#2563EB",
+    fontWeight: "700",
+  },
+  unreadBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#2563EB",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    marginTop: 4,
+    alignSelf: "flex-end",
+  },
+  unreadBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  unreadText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  unreadMessageText: {
+    color: "#0F172A",
+    fontWeight: "700",
+  },
+  sectionUnreadPill: {
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
+  },
+  sectionUnreadText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#2563EB",
   },
   cardHeader: {
     flexDirection: "row",
@@ -869,19 +1046,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     color: "#475569",
-  },
-  unreadBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#0256D0",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  unreadText: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#FFFFFF",
   },
   linkButton: {
     paddingVertical: 4,

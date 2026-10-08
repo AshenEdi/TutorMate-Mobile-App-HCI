@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import { getOrCreateConversation } from "../../lib/chat";
 import {
   ActivityIndicator,
   Platform,
@@ -31,10 +32,32 @@ export default function BookingConfirmedScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     bookingRef?: string | string[];
+    tutorId?: string;
+    tutorName?: string;
+    tutorAvatar?: string;
+    subject?: string;
+    timeSlot?: string;
+    dateKey?: string;
+    price?: string;
+    focusText?: string;
   }>();
   const bookingRef = Array.isArray(params.bookingRef)
     ? params.bookingRef[0]
     : params.bookingRef;
+
+  const handleChat = async () => {
+    if (!params.tutorId) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const convId = await getOrCreateConversation(user.id, params.tutorId);
+      if (convId) {
+        router.push({ pathname: "/(student)/ChatConversation", params: { conversationId: convId } });
+      }
+    } catch (e) {
+      console.warn("Failed to open chat", e);
+    }
+  };
 
   const [booking, setBooking] = useState<BookingDetails | null>(null);
   const [loading, setLoading] = useState(Boolean(bookingRef));
@@ -225,7 +248,7 @@ export default function BookingConfirmedScreen() {
             </View>
             <TouchableOpacity 
               style={styles.chatBtn}
-              onPress={() => router.push("/(student)/ChatConversation")}
+              onPress={handleChat}
             >
               <Ionicons name="chatbubble-outline" size={20} color="#1E293B" />
             </TouchableOpacity>

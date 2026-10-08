@@ -67,6 +67,7 @@ export default function SessionBookingScreen() {
   const [tutorProfile, setTutorProfile] = useState<TutorProfile | null>(null);
   const [booking, setBooking] = useState(false);
   const [walletLoading, setWalletLoading] = useState(true);
+  const [availabilityLoading, setAvailabilityLoading] = useState(true);
 
   const tutor: TutorDetails = {
     id: tutorProfile?.id || tutorId || "",
@@ -145,11 +146,12 @@ export default function SessionBookingScreen() {
         const now = new Date();
         const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-        const { data: availRows } = await supabase
+        const { data: availRows, error: availabilityError } = await supabase
           .from("tutor_availability")
           .select("*")
           .eq("tutor_id", tutorId)
           .gte("date", todayStr);
+        if (availabilityError) throw availabilityError;
 
         const map: Record<string, { morning: boolean; afternoon: boolean; evening: boolean }> = {};
         if (availRows) {
@@ -161,33 +163,6 @@ export default function SessionBookingScreen() {
             };
           });
         }
-
-        // Merge AsyncStorage schedule for this tutor
-        try {
-          const allKeys = await AsyncStorage.getAllKeys();
-          const schedKeys = allKeys.filter((k) => k.startsWith("@tutormate_schedule_availability_v1"));
-          for (const key of schedKeys) {
-            const parts = key.split("_");
-            if (parts.length >= 6) {
-              const y = parts[4];
-              const m = parts[5];
-              const val = await AsyncStorage.getItem(key);
-              if (val) {
-                const dayMap = JSON.parse(val);
-                Object.keys(dayMap).forEach((dStr) => {
-                  const dateKey = `${y}-${m}-${String(dStr).padStart(2, '0')}`;
-                  if (!map[dateKey]) {
-                    map[dateKey] = {
-                      morning: !!dayMap[dStr].morning,
-                      afternoon: !!dayMap[dStr].afternoon,
-                      evening: !!dayMap[dStr].evening,
-                    };
-                  }
-                });
-              }
-            }
-          }
-        } catch {}
 
         // Fetch booked sessions from Supabase bookings table to exclude booked slots
         try {
@@ -221,6 +196,8 @@ export default function SessionBookingScreen() {
         }
       } catch (e) {
         console.warn("Failed to load tutor booking availability:", e);
+      } finally {
+        if (isMounted) setAvailabilityLoading(false);
       }
     }
 
@@ -239,16 +216,19 @@ export default function SessionBookingScreen() {
     const dayLabel = idx === 0 ? "TODAY" : d.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
     const dateNum = String(d.getDate());
     const monthName = d.toLocaleDateString("en-US", { month: "short" });
-    const hasAvail = availabilityMap[ymd]
-      ? (availabilityMap[ymd].morning || availabilityMap[ymd].afternoon || availabilityMap[ymd].evening)
-      : true;
+    const dayAvailability = availabilityMap[ymd];
+    const hasAvail = Boolean(
+      dayAvailability?.morning ||
+      dayAvailability?.afternoon ||
+      dayAvailability?.evening,
+    );
 
     return { id: String(idx + 1), dateKey: ymd, day: dayLabel, date: dateNum, month: monthName, hasAvail };
   });
 
   const selectedDateObj = upcomingDates[selectedDateIdx] || upcomingDates[0];
   const dateKey = selectedDateObj.dateKey;
-  const availWindow = availabilityMap[dateKey] || { morning: true, afternoon: true, evening: true };
+  const availWindow = availabilityMap[dateKey] || { morning: false, afternoon: false, evening: false };
 
   // Generate time slots based on tutor_availability windows for selectedDate
   let generatedSlots: string[] = [];
@@ -256,14 +236,10 @@ export default function SessionBookingScreen() {
     generatedSlots.push("9:00 AM - 10:00 AM", "10:30 AM - 11:30 AM");
   }
   if (availWindow.afternoon) {
-    generatedSlots.push("1:00 PM - 2:00 PM", "2:30 PM - 3:30 PM", "3:30 PM - 4:30 PM", "4:30 PM - 5:30 PM");
+    generatedSlots.push("1:00 PM - 2:00 PM", "2:30 PM - 3:30 PM", "3:30 PM - 4:30 PM");
   }
   if (availWindow.evening) {
     generatedSlots.push("6:00 PM - 7:00 PM", "7:30 PM - 8:30 PM");
-  }
-
-  if (generatedSlots.length === 0) {
-    generatedSlots = ["2:00 PM - 3:00 PM", "3:30 PM - 4:30 PM", "5:00 PM - 6:00 PM", "7:00 PM - 8:00 PM"];
   }
 
   // Filter out booked slots for this tutor and date
@@ -273,7 +249,7 @@ export default function SessionBookingScreen() {
     );
   });
 
-  const activeSlots = availableSlots.length > 0 ? availableSlots : generatedSlots;
+  const activeSlots = availableSlots;
 
   // Session lengths & prices
   const lengths = [
@@ -283,7 +259,7 @@ export default function SessionBookingScreen() {
   ];
 
   const selectedLengthObj = lengths[selectedLengthIdx] || lengths[1];
-  const selectedSlotText = activeSlots[selectedSlotIdx] || activeSlots[0] || "3:30 PM - 4:30 PM";
+  const selectedSlotText = activeSlots[selectedSlotIdx] || "";
 
   const numericPrice = selectedLengthIdx === 0
     ? Math.round(tutor.hourlyRate * 0.75)
@@ -292,6 +268,11 @@ export default function SessionBookingScreen() {
     : tutor.hourlyRate;
 
   const handleConfirm = async () => {
+    if (!selectedSlotText || !activeSlots.includes(selectedSlotText)) {
+      showMessage("No Available Time", "Choose a time slot within a period the tutor has opened.");
+      return;
+    }
+
     setBooking(true);
     try {
       const bookingTutorId = tutorId || tutorProfile?.id;
@@ -538,7 +519,12 @@ export default function SessionBookingScreen() {
               return (
                 <TouchableOpacity
                   key={d.id}
-                  style={[styles.datePill, isActive && styles.datePillActive]}
+                  style={[
+                    styles.datePill,
+                    isActive && styles.datePillActive,
+                    !d.hasAvail && styles.datePillDisabled,
+                  ]}
+                  disabled={availabilityLoading || !d.hasAvail}
                   onPress={() => {
                     setSelectedDateIdx(idx);
                     setSelectedSlotIdx(0);
@@ -583,7 +569,7 @@ export default function SessionBookingScreen() {
 
           {/* Time Slots */}
           <View style={styles.subSection}>
-            <Text style={styles.slotsLabel}>Available Afternoon & Evening Slots</Text>
+            <Text style={styles.slotsLabel}>Available Time Slots</Text>
             <View style={styles.slotsGrid}>
               {activeSlots.map((slotTime, idx) => {
                 const isActive = selectedSlotIdx === idx;
@@ -598,6 +584,15 @@ export default function SessionBookingScreen() {
                   </TouchableOpacity>
                 );
               })}
+              {activeSlots.length === 0 && (
+                <Text style={styles.noSlotsText}>
+                  {availabilityLoading
+                    ? "Loading tutor availability..."
+                    : !selectedDateObj.hasAvail
+                      ? "The tutor has not opened any time periods for this date."
+                      : "All available time slots are booked."}
+                </Text>
+              )}
             </View>
           </View>
         </View>
@@ -689,9 +684,12 @@ export default function SessionBookingScreen() {
 
         {/* --- CONFIRM BUTTON --- */}
         <TouchableOpacity
-          style={styles.confirmBtn}
+          style={[
+            styles.confirmBtn,
+            (availabilityLoading || activeSlots.length === 0) && styles.confirmBtnDisabled,
+          ]}
           onPress={handleConfirm}
-          disabled={booking || walletLoading || !tutorProfile}
+          disabled={booking || walletLoading || availabilityLoading || !tutorProfile || activeSlots.length === 0}
         >
           <Text style={styles.confirmBtnText}>
             {booking ? "Booking..." : `Confirm & Book Session • $${numericPrice.toFixed(2)} →`}
@@ -931,6 +929,9 @@ const styles = StyleSheet.create({
   datePillActive: {
     backgroundColor: "#2563EB",
   },
+  datePillDisabled: {
+    opacity: 0.45,
+  },
   dateDay: {
     fontSize: 10,
     fontWeight: "600",
@@ -1013,6 +1014,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
+  },
+  noSlotsText: {
+    fontSize: 12,
+    color: "#64748B",
+    paddingVertical: 8,
   },
   slotBtn: {
     width: "48%",
@@ -1225,6 +1231,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 4,
+  },
+  confirmBtnDisabled: {
+    opacity: 0.5,
   },
   confirmBtnText: {
     fontSize: 16,

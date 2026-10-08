@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import React, { useEffect, useState, useCallback } from "react";
 import {
     Image,
     Platform,
@@ -11,69 +12,11 @@ import {
     TextInput,
     TouchableOpacity,
     View,
+    ActivityIndicator,
 } from "react-native";
+import { supabase } from "../../../lib/supabase";
 
-// --- MOCK DATA ---
-const CONVERSATIONS = [
-  {
-    id: "1",
-    name: "Dr. Sarah Jenkins",
-    avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-    verified: true,
-    online: true,
-    time: "10:42 AM",
-    subject: "AP Calculus BC",
-    status: "Session in 3h",
-    lastMessage: "I shared the practice exam PDF....",
-    unread: 2,
-    hasAttachment: true,
-  },
-  {
-    id: "2",
-    name: "Marcus Vance",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop",
-    verified: true,
-    online: true,
-    time: "Yesterday",
-    subject: "Organic Chemistry",
-    lastMessage: "Great progress with nucleophilic...",
-    unread: 1,
-    isStarred: true,
-  },
-  {
-    id: "3",
-    name: "Elena Rostova",
-    avatar: "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop",
-    verified: true,
-    online: true,
-    time: "Mar 12",
-    subject: "Physics Mechanics",
-    lastMessage: "Thanks for confirming tomorrow's...",
-    isRead: true,
-    hasClock: true,
-  },
-  {
-    id: "4",
-    name: "David Kim",
-    avatar: "https://images.unsplash.com/photo-1560250097-0b93528c311a?q=80&w=200&auto=format&fit=crop",
-    verified: true,
-    online: true,
-    time: "Mar 10",
-    subject: "Linear Algebra",
-    lastMessage: "You aced the eigenvalues quiz! Ta...",
-    isRead: true,
-  },
-  {
-    id: "5",
-    name: "Midterm Prep Pod",
-    isGroup: true,
-    time: "Mar 8",
-    subject: "Study Group • 5 members",
-    lastMessage: "Chloe: Who wants to hop on a sh...",
-    isRead: true,
-  },
-];
-
+// --- MOCK DATA FOR QUICK CONNECT ---
 const QUICK_CONNECT = [
   { id: "1", name: "Dr. Sarah", avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop" },
   { id: "2", name: "Marcus", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop" },
@@ -83,6 +26,153 @@ const QUICK_CONNECT = [
 
 export default function MessagesInboxScreen() {
   const router = useRouter();
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [quickTutors, setQuickTutors] = useState<any[]>(QUICK_CONNECT);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState<"all" | "unread" | "active">("all");
+
+  const fetchInbox = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      
+      // Fetch user's conversations
+      const { data: convs, error: convsError } = await supabase
+        .from("conversations")
+        .select("*")
+        .eq("student_id", user.id)
+        .order("updated_at", { ascending: false });
+
+      if (convsError) {
+        console.warn("[MessagesInbox] Error fetching conversations:", convsError.message);
+      }
+        
+      if (!convs || convs.length === 0) {
+        setConversations([]);
+        setLoading(false);
+      } else {
+        // Fetch tutor profiles safely using select('*')
+        const tutorIds = convs.map((c: any) => c.tutor_id);
+        const { data: profiles, error: profError } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("id", tutorIds);
+          
+        if (profError) {
+          console.warn("[MessagesInbox] Error fetching profiles:", profError.message);
+        }
+          
+        const profileMap: Record<string, any> = {};
+        profiles?.forEach((p: any) => { profileMap[p.id] = p; });
+        
+        // Fetch unread counts (where user is NOT the sender)
+        const { data: unreadCounts } = await supabase
+          .from("messages")
+          .select("conversation_id")
+          .eq("is_read", false)
+          .neq("sender_id", user.id)
+          .in("conversation_id", convs.map((c: any) => c.id));
+          
+        const unreadMap: Record<string, number> = {};
+        unreadCounts?.forEach((m: any) => {
+          unreadMap[m.conversation_id] = (unreadMap[m.conversation_id] || 0) + 1;
+        });
+
+        const mapped = convs.map((c: any) => {
+          const tutor = profileMap[c.tutor_id] || {};
+          const tutorName = tutor.full_name || tutor.name || (tutor.email ? tutor.email.split('@')[0] : "Tutor");
+          const unreadCount = unreadMap[c.id] || 0;
+          
+          return {
+            id: c.id,
+            tutorId: c.tutor_id,
+            name: tutorName,
+            avatar: tutor.avatar_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+            verified: true,
+            online: true, 
+            time: new Date(c.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            subject: tutor.specialty || (Array.isArray(tutor.subjects) ? tutor.subjects.join(', ') : tutor.subjects) || "Tutoring Session", 
+            lastMessage: c.last_message || "Started a conversation...",
+            unread: unreadCount,
+          };
+        });
+        
+        setConversations(mapped);
+        setLoading(false);
+      }
+
+      // Also fetch directory tutors for Quick Connect
+      const { data: dbTutors } = await supabase
+        .from("profiles")
+        .select("*")
+        .neq("id", user.id)
+        .limit(10);
+
+      if (dbTutors && dbTutors.length > 0) {
+        const filtered = dbTutors
+          .filter((p: any) => !p.role || p.role.toLowerCase() === 'tutor' || p.role.toLowerCase() !== 'student')
+          .map((p: any) => ({
+            id: p.id,
+            name: p.full_name || p.name || (p.email ? p.email.split('@')[0] : "Tutor"),
+            avatar: p.avatar_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+          }));
+        if (filtered.length > 0) {
+          setQuickTutors(filtered);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to fetch inbox:", err);
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadData() {
+      if (isMounted) {
+        await fetchInbox();
+      }
+    }
+
+    loadData();
+
+    // Subscribe to conversations changes to auto-update inbox
+    const channelName = `student_inbox_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const convChannel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "conversations" },
+        () => {
+          if (isMounted) fetchInbox();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(convChannel);
+    };
+  }, [fetchInbox]);
+
+  const handleMarkAllRead = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || conversations.length === 0) return;
+      const convIds = conversations.map(c => c.id);
+      await supabase
+        .from("messages")
+        .update({ is_read: true })
+        .in("conversation_id", convIds)
+        .neq("sender_id", user.id)
+        .eq("is_read", false);
+      setConversations(prev => prev.map(c => ({ ...c, unread: 0 })));
+    } catch (e) {
+      console.warn("Failed to mark all read:", e);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -117,6 +207,8 @@ export default function MessagesInboxScreen() {
               style={styles.searchInput}
               placeholder="Search messages or tutors..."
               placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
             />
           </View>
           <TouchableOpacity
@@ -129,20 +221,29 @@ export default function MessagesInboxScreen() {
 
         {/* --- FILTER TABS --- */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterTabs}>
-          <TouchableOpacity style={[styles.filterTab, styles.filterTabActive]}>
-            <Text style={[styles.filterTabText, styles.filterTabTextActive]}>All (5)</Text>
+          <TouchableOpacity 
+            style={[styles.filterTab, activeFilter === "all" && styles.filterTabActive]}
+            onPress={() => setActiveFilter("all")}
+          >
+            <Text style={[styles.filterTabText, activeFilter === "all" && styles.filterTabTextActive]}>
+              All ({conversations.length})
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.filterTab}>
-            <Text style={styles.filterTabText}>Unread (2)</Text>
-            <View style={styles.unreadDotSmall} />
+          <TouchableOpacity 
+            style={[styles.filterTab, activeFilter === "unread" && styles.filterTabActive]}
+            onPress={() => setActiveFilter("unread")}
+          >
+            <Text style={[styles.filterTabText, activeFilter === "unread" && styles.filterTabTextActive]}>
+              Unread ({conversations.filter(c => c.unread > 0).length})
+            </Text>
+            {conversations.some(c => c.unread > 0) && <View style={styles.unreadDotSmall} />}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.filterTab}>
-            <Ionicons name="checkmark-circle-outline" size={16} color="#64748B" style={{ marginRight: 4 }} />
-            <Text style={styles.filterTabText}>Active Tutors</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.filterTab}>
-            <Ionicons name="archive-outline" size={16} color="#64748B" style={{ marginRight: 4 }} />
-            <Text style={styles.filterTabText}>Archived</Text>
+          <TouchableOpacity 
+            style={[styles.filterTab, activeFilter === "active" && styles.filterTabActive]}
+            onPress={() => setActiveFilter("active")}
+          >
+            <Ionicons name="checkmark-circle-outline" size={16} color={activeFilter === "active" ? "#2563EB" : "#64748B"} style={{ marginRight: 4 }} />
+            <Text style={[styles.filterTabText, activeFilter === "active" && styles.filterTabTextActive]}>Active Tutors</Text>
           </TouchableOpacity>
         </ScrollView>
 
@@ -152,41 +253,70 @@ export default function MessagesInboxScreen() {
             <View style={styles.greenDot} />
             <Text style={styles.sectionTitle}>Quick Connect</Text>
           </View>
-          <Text style={styles.sectionSubtitle}>4 online now</Text>
+          <Text style={styles.sectionSubtitle}>Verified Tutors</Text>
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickConnectScroll}>
-          {QUICK_CONNECT.map((tutor) => (
-            <View key={tutor.id} style={styles.quickTutor}>
+          {quickTutors.map((tutor) => (
+            <TouchableOpacity 
+              key={tutor.id} 
+              style={styles.quickTutor}
+              onPress={() => router.push("/(student)/NewMessage")}
+            >
               <View style={styles.avatarWrapper}>
                 <Image source={{ uri: tutor.avatar }} style={styles.quickAvatar} />
                 <View style={styles.onlineBadge} />
               </View>
               <Text style={styles.quickName} numberOfLines={1}>{tutor.name}</Text>
-            </View>
+            </TouchableOpacity>
           ))}
-          <TouchableOpacity style={styles.quickTutor}>
+          <TouchableOpacity 
+            style={styles.quickTutor}
+            onPress={() => router.push("/(student)/NewMessage")}
+          >
             <View style={styles.newRoomBtn}>
               <Ionicons name="person-add-outline" size={24} color="#2563EB" />
             </View>
-            <Text style={styles.quickName}>New Room</Text>
+            <Text style={styles.quickName}>New Chat</Text>
           </TouchableOpacity>
         </ScrollView>
 
         {/* --- RECENT CONVERSATIONS --- */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionHeaderTitle}>RECENT CONVERSATIONS</Text>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={handleMarkAllRead}>
             <Text style={styles.markReadLink}>Mark all read</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.conversationsList}>
-          {CONVERSATIONS.map((conv) => (
+          {loading && (
+            <View style={{ padding: 20, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color="#2563EB" />
+            </View>
+          )}
+          {!loading && conversations.length === 0 && (
+            <View style={{ padding: 20, alignItems: 'center' }}>
+              <Text style={{ color: '#94A3B8' }}>No conversations yet.</Text>
+            </View>
+          )}
+          {conversations
+            .filter((c) => {
+              if (activeFilter === "unread") return c.unread > 0;
+              if (searchQuery.trim()) {
+                const q = searchQuery.toLowerCase();
+                return c.name.toLowerCase().includes(q) || c.lastMessage.toLowerCase().includes(q);
+              }
+              return true;
+            })
+            .map((conv) => (
             <TouchableOpacity 
               key={conv.id} 
               style={styles.conversationCard}
-              onPress={() => router.push("/(student)/ChatConversation")}
+              onPress={() => router.push({
+                pathname: "/(student)/ChatConversation",
+                params: { conversationId: conv.id }
+              })}
             >
               <View style={styles.convAvatarWrapper}>
                 {conv.isGroup ? (
@@ -223,15 +353,15 @@ export default function MessagesInboxScreen() {
                     {conv.isRead ? '✓✓ ' : ''}{conv.lastMessage}
                   </Text>
                   <View style={styles.convActions}>
-                    {conv.unread && (
+                    {Boolean(conv.unread && conv.unread > 0) && (
                       <View style={styles.unreadBadge}>
-                        <Text style={styles.unreadCount}>{conv.unread}</Text>
+                        <Text style={styles.unreadCount}>{conv.unread > 99 ? "99+" : conv.unread}</Text>
                       </View>
                     )}
                     {conv.hasAttachment && <Ionicons name="attach-outline" size={18} color="#2563EB" />}
                     {conv.isStarred && <Ionicons name="star-outline" size={18} color="#94A3B8" />}
                     {conv.hasClock && <Ionicons name="time-outline" size={18} color="#94A3B8" />}
-                    {!conv.unread && !conv.hasAttachment && !conv.isStarred && !conv.hasClock && (
+                    {!(conv.unread && conv.unread > 0) && !conv.hasAttachment && !conv.isStarred && !conv.hasClock && (
                       <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
                     )}
                   </View>
@@ -239,19 +369,6 @@ export default function MessagesInboxScreen() {
               </View>
             </TouchableOpacity>
           ))}
-        </View>
-
-        {/* --- TUTORMATE TIP --- */}
-        <View style={styles.tipCard}>
-          <View style={styles.tipIconBg}>
-            <Ionicons name="bulb-outline" size={24} color="#2563EB" />
-          </View>
-          <View style={styles.tipContent}>
-            <Text style={styles.tipTitle}>TutorMate Tip</Text>
-            <Text style={styles.tipBody}>
-              Sending your homework questions 2 hours ahead helps tutors personalize your session notes!
-            </Text>
-          </View>
         </View>
       </ScrollView>
 
