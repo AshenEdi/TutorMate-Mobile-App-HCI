@@ -314,25 +314,16 @@ export default function EditStudentProfileScreen() {
             </View>
           </View>
 
-          {/* Grade & Track Row */}
-          <View style={styles.row}>
-            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-              <Text style={styles.label}>Grade Level</Text>
-              <View style={styles.inputWrapper}>
-                <Text style={styles.inputText}>Grade 12</Text>
-                <Ionicons name="chevron-down" size={16} color="#64748B" />
-              </View>
-            </View>
-            <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
-              <Text style={styles.label}>Education</Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  value={education}
-                  onChangeText={setEducation}
-                  placeholderTextColor="#94A3B8"
-                />
-              </View>
+          {/* Education */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Education</Text>
+            <View style={styles.inputWrapper}>
+              <TextInput
+                style={styles.input}
+                value={education}
+                onChangeText={setEducation}
+                placeholderTextColor="#94A3B8"
+              />
             </View>
           </View>
 
