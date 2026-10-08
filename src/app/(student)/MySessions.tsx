@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import { getOrCreateConversation } from "../../lib/chat";
 import {
   ActivityIndicator,
   Alert,
@@ -41,58 +42,107 @@ export default function MySessionsScreen() {
   const [sessionsList, setSessionsList] = useState<SessionItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchBookings = useCallback(async () => {
+  const handleChat = async (tutorId: string) => {
+    if (!tutorId) return;
     try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-      if (userError) throw userError;
-      if (!user) {
-        setSessionsList([]);
-        return;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const convId = await getOrCreateConversation(user.id, tutorId);
+      if (convId) {
+        router.push({ pathname: "/(student)/ChatConversation", params: { conversationId: convId } });
       }
-
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("*")
-        .eq("student_id", user.id)
-        .order("session_date", { ascending: true });
-      if (error) throw error;
-
-      setSessionsList(
-        (data ?? []).map((booking) => ({
-          id: booking.id,
-          tutorName: booking.tutor_name || "Tutor",
-          tutorAvatar: DEFAULT_AVATAR,
-          subject: booking.subject || "Tutoring Session",
-          topic: booking.focus_notes || "Custom Tutoring Session",
-          date: booking.session_date || "",
-          time: booking.time_slot || "",
-          status: booking.status
-            ? booking.status.charAt(0).toUpperCase() + booking.status.slice(1)
-            : "Confirmed",
-          duration: booking.duration || "60 mins (1 hr)",
-          delivery: booking.delivery_format || "Interactive Video & Canvas Whiteboard",
-          rating: "5.0",
-          bookingRef: booking.booking_ref || "",
-        })),
-      );
-    } catch (error) {
-      console.error("Failed to fetch sessions:", error);
-      if (Platform.OS === "web") {
-        window.alert("Error\n\nUnable to load your sessions.");
-      } else {
-        Alert.alert("Error", "Unable to load your sessions.");
-      }
-    } finally {
-      setLoading(false);
+    } catch (e) {
+      console.warn("Failed to open chat", e);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    void Promise.resolve().then(fetchBookings);
-  }, [fetchBookings]);
+    let isMounted = true;
+
+    async function fetchBookings() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+
+        // 1. Fetch from Supabase — build the query with filter BEFORE awaiting
+        let dbQuery = supabase
+          .from("bookings")
+          .select("*")
+          .order("session_date", { ascending: true });
+
+        if (user?.id) {
+          dbQuery = dbQuery.eq("student_id", user.id);
+        }
+
+        const { data: dbBookings } = await dbQuery;
+
+        // 2. Fetch from AsyncStorage (local backup after offline booking)
+        let localBookings: any[] = [];
+        try {
+          const stored = await AsyncStorage.getItem("@tutormate_booked_sessions");
+          if (stored) localBookings = JSON.parse(stored);
+        } catch {}
+
+        // Only include local bookings that match the logged-in student
+        const filteredLocal = user?.id
+          ? localBookings.filter((b: any) => !b.studentId || b.studentId === user.id)
+          : localBookings;
+
+        const mergedMap: Record<string, any> = {};
+
+        // Add local bookings first (as fallback)
+        filteredLocal.forEach((b: any, idx: number) => {
+          const idStr = b.id || `local_${idx}`;
+          mergedMap[idStr] = {
+            id: idStr,
+            tutorName: b.tutorName || "Tutor",
+            tutorAvatar: b.tutorAvatar || DEFAULT_AVATAR,
+            subject: b.subject || "Tutoring Session",
+            topic: b.focusText || "Custom Tutoring Session",
+            date: b.date || "",
+            time: b.timeSlot || "",
+            status: b.status ? (b.status.charAt(0).toUpperCase() + b.status.slice(1)) : "Confirmed",
+            duration: b.duration || "60 mins (1 hr)",
+            delivery: b.deliveryFormat || "Interactive Video & Canvas Whiteboard",
+            rating: "5.0",
+            bookingRef: b.bookingRef || "",
+          };
+        });
+
+        // Add / override with DB bookings (authoritative source)
+        if (dbBookings && dbBookings.length > 0) {
+          dbBookings.forEach((b: any) => {
+            mergedMap[b.id] = {
+              id: b.id,
+              tutor_id: b.tutor_id,
+              tutorName: b.tutor_name || "Tutor",
+              tutorAvatar: DEFAULT_AVATAR,
+              subject: b.subject || "Tutoring Session",
+              topic: b.focus_notes || "Custom Tutoring Session",
+              date: b.session_date || "",
+              time: b.time_slot || "",
+              status: b.status ? (b.status.charAt(0).toUpperCase() + b.status.slice(1)) : "Confirmed",
+              duration: b.duration || "60 mins (1 hr)",
+              delivery: b.delivery_format || "Interactive Video & Canvas Whiteboard",
+              rating: "5.0",
+              bookingRef: b.booking_ref || "",
+            };
+          });
+        }
+
+        if (isMounted) {
+          setSessionsList(Object.values(mergedMap));
+          setLoading(false);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch sessions:", err);
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    fetchBookings();
+    return () => { isMounted = false; };
+  }, []);
+
 
   const confirmCancel = (session: SessionItem, onConfirm: () => void) => {
     const message = `Are you sure you want to cancel your session with ${session.tutorName || "the tutor"}?`;
@@ -335,7 +385,7 @@ Booking Ref: ${session.bookingRef || "—"}
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.chatBtn}
-                onPress={() => router.push("/(student)/ChatConversation")}
+                onPress={() => handleChat(featuredSession.tutor_id)}
               >
                 <Ionicons name="chatbubble-ellipses-outline" size={22} color="#2563EB" />
               </TouchableOpacity>
@@ -433,7 +483,7 @@ Booking Ref: ${session.bookingRef || "—"}
                 )}
                 <TouchableOpacity 
                   style={styles.smallChatBtn}
-                  onPress={() => router.push("/(student)/ChatConversation")}
+                  onPress={() => handleChat(session.tutor_id)}
                 >
                   <Ionicons name="chatbubble-outline" size={18} color="#64748B" />
                 </TouchableOpacity>
