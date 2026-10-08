@@ -1,11 +1,10 @@
 import {
-  Feather,
   FontAwesome5,
   Ionicons,
   MaterialCommunityIcons,
 } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useEffect, useState } from "react";
 import {
   Alert,
   Image,
@@ -18,48 +17,243 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { supabase } from "../../../lib/supabase";
+import { AlertModal, AlertType } from "../../components/ui/AlertModal";
+import {
+  DisputeRecord,
+  getDisputeById,
+  resolveDispute,
+  deleteDispute,
+} from "../../services/disputeService";
 
 type DecisionType =
   | "full_refund"
-  | "reschedule"
   | "partial_refund"
   | "dismiss";
 
 export default function DisputeResolutionScreen() {
   const router = useRouter();
-  const [selectedDecision, setSelectedDecision] =
-    useState<DecisionType>("full_refund");
+  const params = useLocalSearchParams<{ caseId?: string; id?: string; code?: string }>();
+  const activeId = params.caseId || params.id;
+
+  const [dispute, setDispute] = useState<DisputeRecord | null>(null);
+  const [studentProfile, setStudentProfile] = useState<any>(null);
+  const [tutorProfile, setTutorProfile] = useState<any>(null);
+  const [booking, setBooking] = useState<any>(null);
+  const [selectedDecision, setSelectedDecision] = useState<DecisionType>("full_refund");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    type: AlertType;
+    title: string;
+    message: string;
+    buttonText?: string;
+    cancelText?: string;
+    showCancel?: boolean;
+    onOk?: () => void;
+    onConfirm?: () => void;
+  }>({
+    visible: false,
+    type: "info",
+    title: "",
+    message: "",
+  });
+
+  const showMessage = (
+    title: string,
+    message: string,
+    onOk?: () => void,
+    type: AlertType = "info",
+    buttonText: string = "Got it"
+  ) => {
+    setAlertConfig({
+      visible: true,
+      type,
+      title,
+      message,
+      buttonText,
+      showCancel: false,
+      onOk,
+    });
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDisputeData() {
+      try {
+        let activeDispute: DisputeRecord | null = null;
+
+        if (activeId) {
+          activeDispute = await getDisputeById(activeId);
+        }
+
+        // If no specific ID or not found, try loading the most recent pending dispute
+        if (!activeDispute) {
+          const { data } = await supabase
+            .from("disputes")
+            .select("*")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (data) {
+            activeDispute = data as DisputeRecord;
+          }
+        }
+
+        if (isMounted && activeDispute) {
+          setDispute(activeDispute);
+
+          // Fetch student and tutor profiles
+          const [studentRes, tutorRes, bookingRes] = await Promise.all([
+            supabase.from("profiles").select("*").eq("id", activeDispute.student_id).single(),
+            supabase.from("profiles").select("*").eq("id", activeDispute.tutor_id).single(),
+            activeDispute.booking_id
+              ? supabase.from("bookings").select("*").eq("id", activeDispute.booking_id).single()
+              : Promise.resolve({ data: null }),
+          ]);
+
+          if (isMounted) {
+            setStudentProfile(studentRes.data);
+            setTutorProfile(tutorRes.data);
+            setBooking(bookingRes.data);
+          }
+        }
+      } catch (err) {
+        console.warn("Error loading dispute:", err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    loadDisputeData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeId]);
+
+  const escrowTotal = dispute ? Number(dispute.escrow_amount ?? 45) : 45;
+  const halfAmount = (escrowTotal / 2).toFixed(2);
+
+  // Dynamic Button Label
+  const getActionBtnLabel = () => {
+    switch (selectedDecision) {
+      case "full_refund":
+        return `Approve Full Refund ($${escrowTotal.toFixed(2)})`;
+      case "partial_refund":
+        return `Approve Partial Split ($${halfAmount}/$${halfAmount})`;
+      case "dismiss":
+        return `Dismiss Dispute & Release Escrow ($${escrowTotal.toFixed(2)})`;
+    }
+  };
 
   const handleApproveResolution = () => {
-    let decisionLabel = "Full Refund ($40.00)";
-    if (selectedDecision === "reschedule") decisionLabel = "Reschedule at No Cost";
-    if (selectedDecision === "partial_refund") decisionLabel = "Partial Split ($20/$20)";
-    if (selectedDecision === "dismiss") decisionLabel = "Dispute Dismissed";
+    if (!dispute) return;
 
-    Alert.alert(
-      "Confirm Resolution Order",
-      `Execute ${decisionLabel} for Case #DIS-8092?\n\nThis decision will update escrow accounts immediately and notify Marcus Sterling & Alex Rivera.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Confirm & Execute",
-          style: "default",
-          onPress: () => {
-            Alert.alert("Success", "Dispute resolved and escrow processed.", [
-              { text: "OK", onPress: () => router.back() },
-            ]);
-          },
-        },
-      ]
-    );
+    let decisionLabel = `Full Refund ($${escrowTotal.toFixed(2)})`;
+    let refundAmount = escrowTotal;
+
+    if (selectedDecision === "partial_refund") {
+      decisionLabel = `Partial Split ($${halfAmount} Student / $${halfAmount} Tutor)`;
+      refundAmount = escrowTotal / 2;
+    } else if (selectedDecision === "dismiss") {
+      decisionLabel = "Dispute Dismissed (No Refund to Student)";
+      refundAmount = 0;
+    }
+
+    const studentName = dispute.student_name || studentProfile?.full_name || "Student";
+    const tutorName = dispute.tutor_name || tutorProfile?.full_name || "Tutor";
+
+    setAlertConfig({
+      visible: true,
+      type: "info",
+      title: "Confirm Resolution Order",
+      message: `Execute ${decisionLabel} for Case ${dispute.code}?\n\nThis decision will update balances immediately and notify ${studentName} & ${tutorName}.`,
+      showCancel: true,
+      cancelText: "Cancel",
+      buttonText: "Confirm & Execute",
+      onConfirm: async () => {
+        setAlertConfig((prev) => ({ ...prev, visible: false }));
+        setIsSubmitting(true);
+        const res = await resolveDispute({
+          disputeId: dispute.id,
+          decision: selectedDecision,
+          refundAmount,
+          resolutionNotes: `Admin resolution executed: ${decisionLabel}`,
+          issueTutorStrike: selectedDecision === "full_refund",
+          creditDurationMinutes: 60,
+        });
+
+        setIsSubmitting(false);
+
+        if (res.success) {
+          showMessage(
+            "Order Executed Successfully!",
+            `Dispute ${dispute.code} has been resolved. Funds of $${refundAmount.toFixed(2)} were processed and the case is closed.`,
+            () => router.replace("/(admin)/dashboard"),
+            "success",
+            "Go to Dashboard →"
+          );
+        } else {
+          showMessage("Error", res.error || "Failed to resolve dispute.", undefined, "error");
+        }
+      },
+    });
+  };
+
+  const handleDeleteDispute = () => {
+    if (!dispute) return;
+
+    setAlertConfig({
+      visible: true,
+      type: "warning",
+      title: "Delete Dispute Case",
+      message: `Are you sure you want to permanently delete dispute ${dispute.code}?\n\nThis will remove the dispute from the system.`,
+      showCancel: true,
+      cancelText: "Cancel",
+      buttonText: "Delete",
+      onConfirm: async () => {
+        setAlertConfig((prev) => ({ ...prev, visible: false }));
+        setIsSubmitting(true);
+        const res = await deleteDispute(dispute.id);
+        setIsSubmitting(false);
+
+        if (res.success) {
+          showMessage(
+            "Dispute Deleted",
+            `Dispute ${dispute.code} was permanently deleted.`,
+            () => router.replace("/(admin)/dashboard"),
+            "success",
+            "Back to Dashboard"
+          );
+        } else {
+          showMessage("Error", res.error || "Failed to delete dispute.", undefined, "error");
+        }
+      },
+    });
   };
 
   const handleContactParties = () => {
-    Alert.alert(
-      "Admin Moderation Chat",
-      "Opening three-way administrative mediation thread with Marcus Sterling and Alex Rivera."
+    const sName = dispute?.student_name || "Student";
+    const tName = dispute?.tutor_name || "Tutor";
+    showMessage(
+      "Admin Notice Channel",
+      `Active administrative communication channel open for ${sName} and ${tName}.`,
+      undefined,
+      "info"
     );
   };
+
+  const caseCode = dispute?.code || "#DIS-8092";
+  const studentDisplayName = dispute?.student_name || studentProfile?.full_name || "Marcus Sterling";
+  const tutorDisplayName = dispute?.tutor_name || tutorProfile?.full_name || "Alex Rivera";
+  const subjectName = dispute?.subject || booking?.subject || "AP Physics C Mechanics";
+  const sessionDateStr = booking?.session_date
+    ? `${booking.session_date} • ${booking.time_slot || "4:00 PM – 5:00 PM"}`
+    : "Oct 24, 2026 • 4:00 PM – 5:00 PM (60 min)";
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -78,13 +272,24 @@ export default function DisputeResolutionScreen() {
 
         <Text style={styles.topBarTitle}>Session Dispute Resolution</Text>
 
-        <TouchableOpacity
-          style={styles.avatarButtonTop}
-          activeOpacity={0.8}
-          onPress={() => router.push("/(admin)/AdminProfile")}
-        >
-          <Ionicons name="person" size={17} color="#FFFFFF" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <TouchableOpacity
+            style={styles.deleteTopBtn}
+            activeOpacity={0.8}
+            onPress={handleDeleteDispute}
+            accessibilityLabel="Delete dispute"
+          >
+            <Ionicons name="trash-outline" size={17} color="#DC2626" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.avatarButtonTop}
+            activeOpacity={0.8}
+            onPress={() => router.push("/(admin)/AdminProfile")}
+          >
+            <Ionicons name="person" size={17} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -96,19 +301,21 @@ export default function DisputeResolutionScreen() {
           <View style={styles.caseMetaTopRow}>
             <View>
               <Text style={styles.caseMetaLabel}>DISPUTE CASE</Text>
-              <Text style={styles.caseIdText}>#DIS-8092</Text>
+              <Text style={styles.caseIdText}>{caseCode}</Text>
             </View>
 
             <View style={styles.activeDisputeBadge}>
               <View style={styles.redDot} />
-              <Text style={styles.activeDisputeText}>Active Dispute #117</Text>
+              <Text style={styles.activeDisputeText}>
+                {dispute?.status === "resolved" ? "Resolved" : "Active Dispute"}
+              </Text>
             </View>
           </View>
 
           <View style={styles.priorityRow}>
             <Ionicons name="time-outline" size={14} color="#DC2626" />
             <Text style={styles.priorityText}>
-              Priority: Urgent • Auto-escalates in 02h 48m
+              Priority: {dispute?.priority ? dispute.priority.toUpperCase() : "HIGH"} • Escrow Hold Active
             </Text>
           </View>
         </View>
@@ -126,13 +333,15 @@ export default function DisputeResolutionScreen() {
           <View style={styles.partyCard}>
             <Image
               source={{
-                uri: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
+                uri:
+                  studentProfile?.avatar_url ||
+                  "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
               }}
               style={styles.partyAvatar}
             />
             <View style={styles.partyInfo}>
               <View style={styles.partyNameRow}>
-                <Text style={styles.partyName}>Marcus Sterling</Text>
+                <Text style={styles.partyName}>{studentDisplayName}</Text>
                 <View style={styles.roleTag}>
                   <Text style={styles.roleTagText}>Student</Text>
                 </View>
@@ -141,14 +350,16 @@ export default function DisputeResolutionScreen() {
                 </View>
               </View>
 
-              <Text style={styles.partyTrack}>Grade 12 • AP Calculus BC</Text>
+              <Text style={styles.partyTrack}>
+                {studentProfile?.education || "Grade 12 • AP Calculus BC"}
+              </Text>
 
               <View style={styles.partyStatsRow}>
-                <Text style={styles.statMini}>ID: #STU-9821</Text>
+                <Text style={styles.statMini}>
+                  ID: #{dispute?.student_id?.slice(0, 8).toUpperCase() || "STU-9821"}
+                </Text>
                 <Text style={styles.statDivider}>•</Text>
-                <Text style={styles.statMini}>Sessions: 18 (11 hrs)</Text>
-                <Text style={styles.statDivider}>•</Text>
-                <Text style={styles.statGreen}>Prior Disputes: 0 Clean</Text>
+                <Text style={styles.statGreen}>Standing: Good</Text>
               </View>
             </View>
           </View>
@@ -157,13 +368,15 @@ export default function DisputeResolutionScreen() {
           <View style={styles.partyCard}>
             <Image
               source={{
-                uri: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=200",
+                uri:
+                  tutorProfile?.avatar_url ||
+                  "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=200",
               }}
               style={styles.partyAvatar}
             />
             <View style={styles.partyInfo}>
               <View style={styles.partyNameRow}>
-                <Text style={styles.partyName}>Alex Rivera</Text>
+                <Text style={styles.partyName}>{tutorDisplayName}</Text>
                 <View style={styles.roleTag}>
                   <Text style={styles.roleTagText}>Tutor</Text>
                 </View>
@@ -172,14 +385,18 @@ export default function DisputeResolutionScreen() {
                 </View>
               </View>
 
-              <Text style={styles.partyTrack}>Physics Mentor • Univ Senior</Text>
+              <Text style={styles.partyTrack}>
+                {tutorProfile?.specialty || "Physics Mentor • Univ Senior"}
+              </Text>
 
               <View style={styles.partyStatsRow}>
-                <Text style={styles.statMini}>Rating: ★ 4.6 (32)</Text>
+                <Text style={styles.statMini}>
+                  Rating: ★ {tutorProfile?.rating || "4.8"}
+                </Text>
                 <Text style={styles.statDivider}>•</Text>
-                <Text style={styles.statMini}>ID: #TUT-4482</Text>
-                <Text style={styles.statDivider}>•</Text>
-                <Text style={styles.statRed}>History: 1 Tardiness</Text>
+                <Text style={tutorProfile?.strikes_count ? styles.statRed : styles.statGreen}>
+                  Strikes: {tutorProfile?.strikes_count ?? 0}
+                </Text>
               </View>
             </View>
           </View>
@@ -192,26 +409,27 @@ export default function DisputeResolutionScreen() {
           <View style={styles.sessionDetailsCard}>
             <View style={styles.sessionTopRow}>
               <View style={styles.examPrepBadge}>
-                <Text style={styles.examPrepText}>EXAM PREP</Text>
+                <Text style={styles.examPrepText}>
+                  {dispute?.category ? dispute.category.toUpperCase() : "EXAM PREP"}
+                </Text>
               </View>
               <Text style={styles.escrowAmountText}>
-                $40.00 <Text style={styles.escrowSubtext}>In Escrow</Text>
+                ${escrowTotal.toFixed(2)}{" "}
+                <Text style={styles.escrowSubtext}>In Escrow</Text>
               </Text>
             </View>
 
-            <Text style={styles.sessionTopicTitle}>AP Physics C Mechanics</Text>
+            <Text style={styles.sessionTopicTitle}>{subjectName}</Text>
 
             <View style={styles.sessionMetaItem}>
               <Ionicons name="calendar-outline" size={14} color="#64748B" />
-              <Text style={styles.sessionMetaText}>
-                Oct 24, 2026 • 4:00 PM – 5:00 PM (60 min)
-              </Text>
+              <Text style={styles.sessionMetaText}>{sessionDateStr}</Text>
             </View>
 
             <View style={styles.sessionMetaItem}>
               <Ionicons name="videocam-outline" size={14} color="#64748B" />
               <Text style={styles.sessionMetaText}>
-                Interactive Whiteboard & Video Room
+                {booking?.delivery_format || "Interactive Whiteboard & Video Room"}
               </Text>
             </View>
           </View>
@@ -221,7 +439,7 @@ export default function DisputeResolutionScreen() {
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Case Evidence & Timeline</Text>
-            <Text style={styles.evidenceSubtitle}>3 Verification Logs</Text>
+            <Text style={styles.evidenceSubtitle}>Verified Audit Trail</Text>
           </View>
 
           {/* Timeline Item 1: Student Statement */}
@@ -236,31 +454,25 @@ export default function DisputeResolutionScreen() {
             <View style={styles.timelineContentCard}>
               <View style={styles.timelineCardHeader}>
                 <Text style={styles.timelineSender}>Student Statement</Text>
-                <Text style={styles.timelineTime}>Oct 24 • 4:18 PM</Text>
+                <Text style={styles.timelineTime}>
+                  {dispute?.created_at
+                    ? new Date(dispute.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                    : "4:18 PM"}
+                </Text>
               </View>
               <Text style={styles.quoteText}>
-                &ldquo;Waited in the classroom for 25 minutes. Alex never joined the
-                video room or answered my messages. I had an exam the next
-                morning.&rdquo;
+                &ldquo;{dispute?.student_statement || dispute?.reason || "Waited in classroom for 25 minutes with no tutor attendance."}&rdquo;
               </Text>
 
-              {/* Attachment */}
-              <TouchableOpacity
-                style={styles.attachmentBox}
-                activeOpacity={0.8}
-                onPress={() =>
-                  Alert.alert(
-                    "Screenshot Attachment",
-                    "Viewing verified classroom attendance log screenshot (2.4 MB)."
-                  )
-                }
-              >
-                <Ionicons name="image-outline" size={18} color="#0052CC" />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.attachmentName}>attachment_waitlog_418pm.png</Text>
-                  <Text style={styles.attachmentMeta}>2.4 MB • Verified timestamp</Text>
+              {dispute?.student_attachment_url ? (
+                <View style={styles.attachmentBox}>
+                  <Ionicons name="image-outline" size={18} color="#0052CC" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.attachmentName}>screenshot_evidence.png</Text>
+                    <Text style={styles.attachmentMeta}>Verified timestamp</Text>
+                  </View>
                 </View>
-              </TouchableOpacity>
+              ) : null}
             </View>
           </View>
 
@@ -292,18 +504,14 @@ export default function DisputeResolutionScreen() {
                 <View style={styles.auditLogRow}>
                   <Text style={styles.auditLogKey}>Student connected:</Text>
                   <Text style={[styles.auditLogVal, { color: "#059669", fontWeight: "700" }]}>
-                    3:59 PM (Active 26 min)
+                    Active (Recorded)
                   </Text>
                 </View>
                 <View style={styles.auditLogRow}>
-                  <Text style={styles.auditLogKey}>Tutor connected:</Text>
+                  <Text style={styles.auditLogKey}>Tutor connection:</Text>
                   <Text style={[styles.auditLogVal, { color: "#DC2626", fontWeight: "800" }]}>
                     No connection recorded
                   </Text>
-                </View>
-                <View style={styles.auditLogRow}>
-                  <Text style={styles.auditLogKey}>Room terminated:</Text>
-                  <Text style={styles.auditLogVal}>4:25 PM UTC</Text>
                 </View>
               </View>
             </View>
@@ -320,12 +528,12 @@ export default function DisputeResolutionScreen() {
             <View style={styles.timelineContentCard}>
               <View style={styles.timelineCardHeader}>
                 <Text style={styles.timelineSender}>Tutor Explanation</Text>
-                <Text style={styles.timelineTime}>Oct 24 • 6:30 PM</Text>
+                <Text style={styles.timelineTime}>
+                  {dispute?.tutor_statement ? "Submitted" : "Pending Response"}
+                </Text>
               </View>
               <Text style={styles.quoteText}>
-                &ldquo;My campus Wi-Fi went down abruptly due to a power flicker in
-                the dorms. I apologize and am willing to reschedule or offer full
-                refund.&rdquo;
+                &ldquo;{dispute?.tutor_statement || "My campus Wi-Fi went down abruptly due to a power flicker. I apologize and accept full refund or reschedule."}&rdquo;
               </Text>
               <View style={styles.concessionRow}>
                 <Ionicons name="checkmark-circle" size={14} color="#0D9488" />
@@ -373,38 +581,11 @@ export default function DisputeResolutionScreen() {
               </View>
             </View>
             <Text style={styles.decisionDesc}>
-              Release $40.00 escrow back to Marcus. Issue 1 formal no-show penalty
-              point to Alex Rivera.
+              Release ${escrowTotal.toFixed(2)} escrow back to {studentDisplayName}. Issue 1 formal no-show penalty point to {tutorDisplayName}.
             </Text>
           </TouchableOpacity>
 
-          {/* Option 2: Reschedule Session at No Cost */}
-          <TouchableOpacity
-            style={[
-              styles.decisionCard,
-              selectedDecision === "reschedule" && styles.decisionCardSelected,
-            ]}
-            activeOpacity={0.8}
-            onPress={() => setSelectedDecision("reschedule")}
-          >
-            <View style={styles.decisionTopRow}>
-              <Text style={styles.decisionTitle}>Reschedule Session at No Cost</Text>
-              <View
-                style={[
-                  styles.radioCircle,
-                  selectedDecision === "reschedule" && styles.radioCircleSelected,
-                ]}
-              >
-                {selectedDecision === "reschedule" && <View style={styles.radioDot} />}
-              </View>
-            </View>
-            <Text style={styles.decisionDesc}>
-              Maintain $40.00 in escrow and generate a complimentary re-booking
-              token for student.
-            </Text>
-          </TouchableOpacity>
-
-          {/* Option 3: Partial Refund & Escrow Split */}
+          {/* Option 2: Partial Refund & Escrow Split */}
           <TouchableOpacity
             style={[
               styles.decisionCard,
@@ -425,8 +606,7 @@ export default function DisputeResolutionScreen() {
               </View>
             </View>
             <Text style={styles.decisionDesc}>
-              $20.00 returned to Marcus. $20.00 released to tutor with no formal
-              record mark.
+              ${halfAmount} returned to student. ${halfAmount} released to tutor with no formal record mark.
             </Text>
           </TouchableOpacity>
 
@@ -456,23 +636,13 @@ export default function DisputeResolutionScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* --- Section 5: Audit Trail & Resolution Memo --- */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Audit Trail & Resolution Memo</Text>
-          <View style={styles.memoBox}>
-            <Text style={styles.memoText}>
-              Server logs confirm zero tutor connectivity. Tutor accepted fault via
-              platform chat. Standard policy §4.2 applied.
-            </Text>
-          </View>
-        </View>
-
         {/* --- Bottom Action Buttons --- */}
         <View style={styles.actionButtonsContainer}>
           <TouchableOpacity
             style={styles.approveButton}
             activeOpacity={0.85}
             onPress={handleApproveResolution}
+            disabled={isSubmitting}
           >
             <MaterialCommunityIcons
               name="shield-check-outline"
@@ -480,7 +650,7 @@ export default function DisputeResolutionScreen() {
               color="#FFFFFF"
             />
             <Text style={styles.approveButtonText}>
-              Approve Full Refund ($40.00)
+              {isSubmitting ? "Executing Order..." : getActionBtnLabel()}
             </Text>
           </TouchableOpacity>
 
@@ -494,8 +664,35 @@ export default function DisputeResolutionScreen() {
               Contact Parties via Admin Chat
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.deleteButton}
+            activeOpacity={0.8}
+            onPress={handleDeleteDispute}
+            disabled={isSubmitting}
+          >
+            <Ionicons name="trash-outline" size={16} color="#DC2626" />
+            <Text style={styles.deleteButtonText}>Delete Dispute Record</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* --- POPUP ALERT MODAL --- */}
+      <AlertModal
+        visible={alertConfig.visible}
+        type={alertConfig.type}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        buttonText={alertConfig.buttonText}
+        cancelText={alertConfig.cancelText}
+        showCancel={alertConfig.showCancel}
+        onConfirm={alertConfig.onConfirm}
+        onClose={() => {
+          const onOkAction = alertConfig.onOk;
+          setAlertConfig((prev) => ({ ...prev, visible: false }));
+          if (onOkAction) onOkAction();
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -972,18 +1169,6 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: "#64748B",
   },
-  memoBox: {
-    backgroundColor: "#F8FAFC",
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  memoText: {
-    fontSize: 12,
-    lineHeight: 17,
-    color: "#475569",
-  },
   actionButtonsContainer: {
     gap: 10,
     marginTop: 4,
@@ -1016,6 +1201,30 @@ const styles = StyleSheet.create({
   contactButtonText: {
     color: "#0052CC",
     fontSize: 13.5,
+    fontWeight: "700",
+  },
+  deleteTopBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#FEE2E2",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  deleteButton: {
+    backgroundColor: "#FFF1F2",
+    height: 44,
+    borderRadius: 22,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#FECDD3",
+  },
+  deleteButtonText: {
+    color: "#DC2626",
+    fontSize: 13,
     fontWeight: "700",
   },
 });
