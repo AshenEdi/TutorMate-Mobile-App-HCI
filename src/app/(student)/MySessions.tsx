@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import { getOrCreateConversation } from "../../lib/chat";
 import {
   Image,
   Platform,
@@ -21,6 +22,20 @@ export default function MySessionsScreen() {
   const router = useRouter();
   const [sessionsList, setSessionsList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const handleChat = async (tutorId: string) => {
+    if (!tutorId) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const convId = await getOrCreateConversation(user.id, tutorId);
+      if (convId) {
+        router.push({ pathname: "/(student)/ChatConversation", params: { conversationId: convId } });
+      }
+    } catch (e) {
+      console.warn("Failed to open chat", e);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -79,6 +94,7 @@ export default function MySessionsScreen() {
           dbBookings.forEach((b: any) => {
             mergedMap[b.id] = {
               id: b.id,
+              tutor_id: b.tutor_id,
               tutorName: b.tutor_name || "Tutor",
               tutorAvatar: DEFAULT_AVATAR,
               subject: b.subject || "Tutoring Session",
@@ -287,7 +303,7 @@ export default function MySessionsScreen() {
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.chatBtn}
-                onPress={() => router.push("/(student)/ChatConversation")}
+                onPress={() => handleChat(featuredSession.tutor_id)}
               >
                 <Ionicons name="chatbubble-ellipses-outline" size={22} color="#2563EB" />
               </TouchableOpacity>
@@ -372,7 +388,7 @@ export default function MySessionsScreen() {
                 )}
                 <TouchableOpacity 
                   style={styles.smallChatBtn}
-                  onPress={() => router.push("/(student)/ChatConversation")}
+                  onPress={() => handleChat(session.tutor_id)}
                 >
                   <Ionicons name="chatbubble-outline" size={18} color="#64748B" />
                 </TouchableOpacity>

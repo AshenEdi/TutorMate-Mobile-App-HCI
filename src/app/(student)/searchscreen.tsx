@@ -102,10 +102,14 @@ export default function TutorSearchScreen() {
         // 2. Fetch current logged-in auth user
         const { data: { user: currentUser } } = await supabase.auth.getUser();
 
-        // 3. Fetch ALL tutor profiles explicitly requesting full_name
-        const { data: dbProfilesRaw } = await supabase
+        // 3. Fetch ALL tutor profiles explicitly using select('*')
+        const { data: dbProfilesRaw, error: dbProfilesError } = await supabase
           .from('profiles')
-          .select('id, full_name, name, email, role, specialty, subjects, title, bio, education, degree, degree_credentials, hourly_rate, avatar_url, rating, reviews, points');
+          .select('*');
+
+        if (dbProfilesError) {
+          console.warn("[searchscreen] Supabase profiles fetch error:", dbProfilesError.message);
+        }
 
         // 4. Calculate local dates (today & tomorrow YMD)
         const now = new Date();
