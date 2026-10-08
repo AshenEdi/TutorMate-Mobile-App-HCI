@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Platform,
   SafeAreaView,
@@ -11,6 +11,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { getNotifications, markAllNotificationsAsRead } from "../services/notificationService";
+import { supabase } from "../../lib/supabase";
 
 // --- TYPES ---
 interface NotificationItem {
@@ -115,12 +117,42 @@ const STUDENT_NAV_TABS = [
 export default function NotificationsScreen() {
   const router = useRouter();
   const [selectedTab, setSelectedTab] = useState("all");
-  const [notificationsList, setNotificationsList] = useState(NOTIFICATIONS);
+  const [notificationsList, setNotificationsList] = useState<NotificationItem[]>(NOTIFICATIONS);
 
-  const handleMarkAllRead = () => {
+  useEffect(() => {
+    async function loadRealNotifications() {
+      try {
+        const liveItems = await getNotifications();
+        if (liveItems.length > 0) {
+          const mapped: NotificationItem[] = liveItems.map((n) => ({
+            id: n.id,
+            type: n.type === 'dispute' ? 'session' : n.type === 'moderation' ? 'message' : (n.type as any),
+            title: n.title,
+            timestamp: "Just now",
+            description: n.description,
+            highlightText: n.highlight_text,
+            isUnread: n.is_unread,
+            timeGroup: "TODAY",
+            category: n.category || "Reminders",
+          }));
+
+          setNotificationsList([...mapped, ...NOTIFICATIONS]);
+        }
+      } catch (err) {
+        console.warn("Error fetching real notifications:", err);
+      }
+    }
+    void loadRealNotifications();
+  }, []);
+
+  const handleMarkAllRead = async () => {
     setNotificationsList((prev) =>
       prev.map((item) => ({ ...item, isUnread: false })),
     );
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      void markAllNotificationsAsRead(user.id);
+    }
   };
 
   const renderTimeGroup = (

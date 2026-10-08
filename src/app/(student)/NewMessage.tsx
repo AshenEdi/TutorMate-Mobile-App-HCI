@@ -1,61 +1,133 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-    Alert,
-    Image,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
+import { supabase } from "../../../lib/supabase";
+import { useAuth } from "../../context/AuthContext";
+import { getOrCreateConversation, sendChatMessage } from "../../services/chatService";
 
-// --- MOCK DATA ---
-const SUGGESTED_MENTORS = [
-  {
-    id: "1",
-    name: "Dr. Sarah Jenkins",
-    avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-    verified: true,
-    online: true,
-    info: "AP Calculus • Last session Mar 12",
-  },
-  {
-    id: "2",
-    name: "Elena Rostova",
-    avatar: "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop",
-    online: true,
-    info: "Organic Chemistry",
-    badge: "1 Upcoming",
-  },
-  {
-    id: "3",
-    name: "Dr. Marcus Vance",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop",
-    online: true,
-    info: "AP Physics C • Available today",
-  },
-  {
-    id: "4",
-    name: "David Kim",
-    avatar: "https://images.unsplash.com/photo-1560250097-0b93528c311a?q=80&w=200&auto=format&fit=crop",
-    online: false,
-    orangeDot: true,
-    info: "Coding & Python • Active 2h ago",
-  },
-];
+interface TutorOption {
+  id: string;
+  name: string;
+  avatar: string;
+  verified: boolean;
+  online: boolean;
+  info: string;
+}
 
 export default function NewMessageScreen() {
   const router = useRouter();
-  const [message, setMessage] = useState("");
+  const { user } = useAuth();
 
-  const handleSend = () => {
-    Alert.alert("Message Sent", "", [{ text: "OK", onPress: () => router.back() }]);
+  const [tutors, setTutors] = useState<TutorOption[]>([]);
+  const [selectedTutor, setSelectedTutor] = useState<TutorOption | null>(null);
+  const [searchRecipient, setSearchRecipient] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    async function loadTutors() {
+      try {
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, full_name, avatar_url, specialty, education, background_check_status")
+          .eq("role", "tutor")
+          .order("full_name", { ascending: true })
+          .limit(20);
+
+        if (data) {
+          setTutors(
+            data.map((t) => ({
+              id: t.id,
+              name: t.full_name || "Tutor",
+              avatar:
+                t.avatar_url ||
+                "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+              verified: t.background_check_status === "verified",
+              online: true,
+              info: t.specialty || t.education || "Verified Tutor",
+            }))
+          );
+        }
+      } catch (err) {
+        console.warn("Error loading tutors in NewMessage:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadTutors();
+  }, []);
+
+  const filteredTutors = useMemo(() => {
+    if (!searchRecipient.trim()) return tutors;
+    const q = searchRecipient.toLowerCase().trim();
+    return tutors.filter(
+      (t) => t.name.toLowerCase().includes(q) || t.info.toLowerCase().includes(q)
+    );
+  }, [tutors, searchRecipient]);
+
+  const handleSelectTutor = (t: TutorOption) => {
+    setSelectedTutor(t);
+    setSearchRecipient(t.name);
+  };
+
+  const handleSend = async () => {
+    if (!selectedTutor) {
+      Alert.alert("Select a Mentor", "Please choose a mentor to message.");
+      return;
+    }
+    if (!user?.id) {
+      Alert.alert("Authentication Required", "Please sign in to send messages.");
+      return;
+    }
+
+    setSending(true);
+    try {
+      const convId = await getOrCreateConversation(user.id, selectedTutor.id);
+      if (!convId) {
+        Alert.alert("Error", "Could not start conversation. Please try again.");
+        return;
+      }
+
+      if (message.trim()) {
+        await sendChatMessage({
+          conversationId: convId,
+          senderId: user.id,
+          content: message.trim(),
+          recipientId: selectedTutor.id,
+        });
+      }
+
+      router.replace({
+        pathname: "/(student)/ChatConversation",
+        params: {
+          id: convId,
+          tutorId: selectedTutor.id,
+          name: selectedTutor.name,
+          avatar: selectedTutor.avatar,
+          subject: selectedTutor.info,
+        },
+      });
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Failed to start conversation.");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -85,8 +157,10 @@ export default function NewMessageScreen() {
             </View>
             <Text style={styles.draftText}>Drafting new thread</Text>
           </View>
-          <TouchableOpacity onPress={handleSend}>
-            <Text style={styles.sendBtnText}>Send ➤</Text>
+          <TouchableOpacity onPress={handleSend} disabled={sending}>
+            <Text style={[styles.sendBtnText, sending && { opacity: 0.5 }]}>
+              {sending ? "Starting..." : "Send ➤"}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -97,10 +171,21 @@ export default function NewMessageScreen() {
               <Text style={styles.toLabel}>To:</Text>
               <TextInput
                 style={styles.toInput}
-                placeholder="Search mentor or student name..."
+                placeholder="Search mentor or tutor name..."
                 placeholderTextColor="#94A3B8"
+                value={searchRecipient}
+                onChangeText={(val) => {
+                  setSearchRecipient(val);
+                  if (selectedTutor && val !== selectedTutor.name) {
+                    setSelectedTutor(null);
+                  }
+                }}
               />
-              <Ionicons name="person-add-outline" size={20} color="#2563EB" />
+              {selectedTutor ? (
+                <Ionicons name="checkmark-circle" size={20} color="#0D9488" />
+              ) : (
+                <Ionicons name="person-add-outline" size={20} color="#2563EB" />
+              )}
             </View>
           </View>
 
@@ -108,7 +193,9 @@ export default function NewMessageScreen() {
 
           <TouchableOpacity style={styles.subjectRow}>
             <Ionicons name="bookmark-outline" size={20} color="#64748B" />
-            <Text style={styles.subjectPlaceholder}>Link a Subject or Session (Optional)</Text>
+            <Text style={styles.subjectPlaceholder}>
+              {selectedTutor ? `Subject: ${selectedTutor.info}` : "Link a Subject or Session (Optional)"}
+            </Text>
             <Ionicons name="chevron-down" size={20} color="#64748B" />
           </TouchableOpacity>
         </View>
@@ -116,18 +203,28 @@ export default function NewMessageScreen() {
         {/* --- SUGGESTED MENTORS --- */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>SUGGESTED & RECENT MENTORS</Text>
-          <TouchableOpacity>
-            <Text style={styles.availableLink}>4 available</Text>
-          </TouchableOpacity>
+          <Text style={styles.availableLink}>{filteredTutors.length} available</Text>
         </View>
 
         <View style={styles.mentorList}>
-          {SUGGESTED_MENTORS.map((mentor) => (
-            <View key={mentor.id} style={styles.mentorCard}>
+          {loading && (
+            <View style={{ paddingVertical: 20, alignItems: "center" }}>
+              <ActivityIndicator size="small" color="#2563EB" />
+            </View>
+          )}
+
+          {!loading && filteredTutors.map((mentor) => (
+            <TouchableOpacity
+              key={mentor.id}
+              style={[
+                styles.mentorCard,
+                selectedTutor?.id === mentor.id && { borderColor: "#2563EB", backgroundColor: "#EFF6FF" },
+              ]}
+              onPress={() => handleSelectTutor(mentor)}
+            >
               <View style={styles.mentorAvatarWrapper}>
                 <Image source={{ uri: mentor.avatar }} style={styles.mentorAvatar} />
-                {mentor.online && <View style={styles.onlineBadge} />}
-                {mentor.orangeDot && <View style={[styles.onlineBadge, { backgroundColor: '#F59E0B' }]} />}
+                <View style={styles.onlineBadge} />
               </View>
               <View style={styles.mentorInfo}>
                 <View style={styles.mentorNameRow}>
@@ -136,17 +233,16 @@ export default function NewMessageScreen() {
                 </View>
                 <View style={styles.mentorDetailRow}>
                   <Text style={styles.mentorDetail} numberOfLines={1}>{mentor.info}</Text>
-                  {mentor.badge && (
-                    <View style={styles.upcomingBadge}>
-                      <Text style={styles.upcomingBadgeText}>{mentor.badge}</Text>
-                    </View>
-                  )}
                 </View>
               </View>
-              <TouchableOpacity style={styles.addMentorBtn}>
-                <Ionicons name="add" size={20} color="#2563EB" />
-              </TouchableOpacity>
-            </View>
+              <View style={styles.addMentorBtn}>
+                <Ionicons
+                  name={selectedTutor?.id === mentor.id ? "checkmark" : "add"}
+                  size={20}
+                  color={selectedTutor?.id === mentor.id ? "#0D9488" : "#2563EB"}
+                />
+              </View>
+            </TouchableOpacity>
           ))}
         </View>
 

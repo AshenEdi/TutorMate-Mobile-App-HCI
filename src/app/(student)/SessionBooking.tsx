@@ -3,8 +3,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import { AlertModal, AlertType } from "../../components/ui/AlertModal";
 import {
-    Alert,
     Image,
     Platform,
     SafeAreaView,
@@ -45,13 +45,32 @@ interface TutorProfile {
 
 export default function SessionBookingScreen() {
   const router = useRouter();
-  const showMessage = (title: string, message: string, onOk?: () => void) => {
-    if (Platform.OS === "web") {
-      window.alert(`${title}\n\n${message}`);
-      onOk?.();
-    } else {
-      Alert.alert(title, message, [{ text: "OK", onPress: onOk }]);
-    }
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    type: AlertType;
+    title: string;
+    message: string;
+    onOk?: () => void;
+  }>({
+    visible: false,
+    type: "info",
+    title: "",
+    message: "",
+  });
+
+  const showMessage = (
+    title: string,
+    message: string,
+    onOk?: () => void,
+    type: AlertType = "info"
+  ) => {
+    setAlertConfig({
+      visible: true,
+      type,
+      title,
+      message,
+      onOk,
+    });
   };
 
   const params = useLocalSearchParams<{ tutorId?: string | string[] }>();
@@ -723,6 +742,19 @@ export default function SessionBookingScreen() {
           <Text style={styles.tabLabel}>Profile</Text>
         </TouchableOpacity>
       </View>
+
+      {/* --- IN-APP ALERT MODAL --- */}
+      <AlertModal
+        visible={alertConfig.visible}
+        type={alertConfig.type}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        onClose={() => {
+          const action = alertConfig.onOk;
+          setAlertConfig((prev) => ({ ...prev, visible: false }));
+          action?.();
+        }}
+      />
     </SafeAreaView>
   );
 }
