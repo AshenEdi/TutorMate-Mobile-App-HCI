@@ -1,88 +1,124 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-    Image,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Image,
+  Platform,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
+import { useAuth } from "../../context/AuthContext";
+import {
+  ConversationItem,
+  getStudentConversations,
+  markConversationAsRead,
+} from "../../services/chatService";
 
-// --- MOCK DATA ---
-const CONVERSATIONS = [
-  {
-    id: "1",
-    name: "Dr. Sarah Jenkins",
-    avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-    verified: true,
-    online: true,
-    time: "10:42 AM",
-    subject: "AP Calculus BC",
-    status: "Session in 3h",
-    lastMessage: "I shared the practice exam PDF....",
-    unread: 2,
-    hasAttachment: true,
-  },
-  {
-    id: "2",
-    name: "Marcus Vance",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop",
-    verified: true,
-    online: true,
-    time: "Yesterday",
-    subject: "Organic Chemistry",
-    lastMessage: "Great progress with nucleophilic...",
-    unread: 1,
-    isStarred: true,
-  },
-  {
-    id: "3",
-    name: "Elena Rostova",
-    avatar: "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop",
-    verified: true,
-    online: true,
-    time: "Mar 12",
-    subject: "Physics Mechanics",
-    lastMessage: "Thanks for confirming tomorrow's...",
-    isRead: true,
-    hasClock: true,
-  },
-  {
-    id: "4",
-    name: "David Kim",
-    avatar: "https://images.unsplash.com/photo-1560250097-0b93528c311a?q=80&w=200&auto=format&fit=crop",
-    verified: true,
-    online: true,
-    time: "Mar 10",
-    subject: "Linear Algebra",
-    lastMessage: "You aced the eigenvalues quiz! Ta...",
-    isRead: true,
-  },
-  {
-    id: "5",
-    name: "Midterm Prep Pod",
-    isGroup: true,
-    time: "Mar 8",
-    subject: "Study Group • 5 members",
-    lastMessage: "Chloe: Who wants to hop on a sh...",
-    isRead: true,
-  },
-];
-
-const QUICK_CONNECT = [
-  { id: "1", name: "Dr. Sarah", avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop" },
-  { id: "2", name: "Marcus", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop" },
-  { id: "3", name: "Elena", avatar: "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop" },
-  { id: "4", name: "David K.", avatar: "https://images.unsplash.com/photo-1560250097-0b93528c311a?q=80&w=200&auto=format&fit=crop" },
-];
+type FilterTab = "all" | "unread" | "active" | "archived";
 
 export default function MessagesInboxScreen() {
   const router = useRouter();
+  const { user } = useAuth();
+
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<FilterTab>("all");
+
+  const loadConversations = async () => {
+    try {
+      const data = await getStudentConversations(user?.id);
+      setConversations(data);
+    } catch (err) {
+      console.warn("Error loading student conversations:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadConversations();
+  }, [user?.id]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadConversations();
+  };
+
+  // Distinct Quick Connect tutors from conversations
+  const quickConnectTutors = useMemo(() => {
+    const seen = new Set<string>();
+    const list: { id: string; name: string; avatar: string; tutorId: string }[] = [];
+    conversations.forEach((c) => {
+      if (!seen.has(c.tutorId)) {
+        seen.add(c.tutorId);
+        list.push({
+          id: c.id,
+          name: c.name.split(" ")[0] || c.name,
+          avatar: c.avatar,
+          tutorId: c.tutorId,
+        });
+      }
+    });
+    return list;
+  }, [conversations]);
+
+  // Total unread count
+  const totalUnread = useMemo(() => {
+    return conversations.reduce((acc, c) => acc + (c.unread || 0), 0);
+  }, [conversations]);
+
+  // Filter conversations based on tab and search
+  const filteredConversations = useMemo(() => {
+    return conversations.filter((conv) => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchName = conv.name.toLowerCase().includes(q);
+        const matchMsg = conv.lastMessage.toLowerCase().includes(q);
+        const matchSub = conv.subject?.toLowerCase().includes(q) ?? false;
+        if (!matchName && !matchMsg && !matchSub) return false;
+      }
+
+      if (activeTab === "unread" && conv.unread === 0) return false;
+      if (activeTab === "archived") return false; // currently none archived
+
+      return true;
+    });
+  }, [conversations, searchQuery, activeTab]);
+
+  const handleMarkAllRead = async () => {
+    if (!user?.id) return;
+    const promises = conversations
+      .filter((c) => c.unread > 0)
+      .map((c) => markConversationAsRead(c.id, user.id));
+    await Promise.all(promises);
+    setConversations((prev) =>
+      prev.map((c) => ({ ...c, unread: 0, isRead: true }))
+    );
+  };
+
+  const handleOpenConversation = (conv: ConversationItem) => {
+    router.push({
+      pathname: "/(student)/ChatConversation",
+      params: {
+        id: conv.id,
+        tutorId: conv.tutorId,
+        name: conv.name,
+        avatar: conv.avatar,
+        subject: conv.subject || "",
+      },
+    });
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -101,14 +137,18 @@ export default function MessagesInboxScreen() {
         </View>
 
         <TouchableOpacity 
-        style={styles.bellBtn}
-        onPress={() => router.push("/notification")}
-      >
+          style={styles.bellBtn}
+          onPress={() => router.push("/notification")}
+        >
           <Ionicons name="notifications-outline" size={20} color="#1E293B" />
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
         {/* --- SEARCH BAR --- */}
         <View style={styles.searchRow}>
           <View style={styles.searchContainer}>
@@ -117,7 +157,14 @@ export default function MessagesInboxScreen() {
               style={styles.searchInput}
               placeholder="Search messages or tutors..."
               placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
             />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery("")}>
+                <Ionicons name="close-circle" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
           </View>
           <TouchableOpacity
             style={styles.composeBtn}
@@ -129,117 +176,205 @@ export default function MessagesInboxScreen() {
 
         {/* --- FILTER TABS --- */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterTabs}>
-          <TouchableOpacity style={[styles.filterTab, styles.filterTabActive]}>
-            <Text style={[styles.filterTabText, styles.filterTabTextActive]}>All (5)</Text>
+          <TouchableOpacity
+            style={[styles.filterTab, activeTab === "all" && styles.filterTabActive]}
+            onPress={() => setActiveTab("all")}
+          >
+            <Text style={[styles.filterTabText, activeTab === "all" && styles.filterTabTextActive]}>
+              All ({conversations.length})
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.filterTab}>
-            <Text style={styles.filterTabText}>Unread (2)</Text>
-            <View style={styles.unreadDotSmall} />
+
+          <TouchableOpacity
+            style={[styles.filterTab, activeTab === "unread" && styles.filterTabActive]}
+            onPress={() => setActiveTab("unread")}
+          >
+            <Text style={[styles.filterTabText, activeTab === "unread" && styles.filterTabTextActive]}>
+              Unread ({totalUnread})
+            </Text>
+            {totalUnread > 0 && <View style={styles.unreadDotSmall} />}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.filterTab}>
-            <Ionicons name="checkmark-circle-outline" size={16} color="#64748B" style={{ marginRight: 4 }} />
-            <Text style={styles.filterTabText}>Active Tutors</Text>
+
+          <TouchableOpacity
+            style={[styles.filterTab, activeTab === "active" && styles.filterTabActive]}
+            onPress={() => setActiveTab("active")}
+          >
+            <Ionicons
+              name="checkmark-circle-outline"
+              size={16}
+              color={activeTab === "active" ? "#FFFFFF" : "#64748B"}
+              style={{ marginRight: 4 }}
+            />
+            <Text style={[styles.filterTabText, activeTab === "active" && styles.filterTabTextActive]}>
+              Active Tutors
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.filterTab}>
-            <Ionicons name="archive-outline" size={16} color="#64748B" style={{ marginRight: 4 }} />
-            <Text style={styles.filterTabText}>Archived</Text>
+
+          <TouchableOpacity
+            style={[styles.filterTab, activeTab === "archived" && styles.filterTabActive]}
+            onPress={() => setActiveTab("archived")}
+          >
+            <Ionicons
+              name="archive-outline"
+              size={16}
+              color={activeTab === "archived" ? "#FFFFFF" : "#64748B"}
+              style={{ marginRight: 4 }}
+            />
+            <Text style={[styles.filterTabText, activeTab === "archived" && styles.filterTabTextActive]}>
+              Archived
+            </Text>
           </TouchableOpacity>
         </ScrollView>
 
         {/* --- QUICK CONNECT --- */}
-        <View style={styles.sectionHeader}>
-          <View style={styles.quickConnectTitle}>
-            <View style={styles.greenDot} />
-            <Text style={styles.sectionTitle}>Quick Connect</Text>
-          </View>
-          <Text style={styles.sectionSubtitle}>4 online now</Text>
-        </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickConnectScroll}>
-          {QUICK_CONNECT.map((tutor) => (
-            <View key={tutor.id} style={styles.quickTutor}>
-              <View style={styles.avatarWrapper}>
-                <Image source={{ uri: tutor.avatar }} style={styles.quickAvatar} />
-                <View style={styles.onlineBadge} />
+        {quickConnectTutors.length > 0 && (
+          <>
+            <View style={styles.sectionHeader}>
+              <View style={styles.quickConnectTitle}>
+                <View style={styles.greenDot} />
+                <Text style={styles.sectionTitle}>Quick Connect</Text>
               </View>
-              <Text style={styles.quickName} numberOfLines={1}>{tutor.name}</Text>
+              <Text style={styles.sectionSubtitle}>{quickConnectTutors.length} online now</Text>
             </View>
-          ))}
-          <TouchableOpacity style={styles.quickTutor}>
-            <View style={styles.newRoomBtn}>
-              <Ionicons name="person-add-outline" size={24} color="#2563EB" />
-            </View>
-            <Text style={styles.quickName}>New Room</Text>
-          </TouchableOpacity>
-        </ScrollView>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickConnectScroll}>
+              {quickConnectTutors.map((tutor) => (
+                <TouchableOpacity
+                  key={tutor.id}
+                  style={styles.quickTutor}
+                  onPress={() => {
+                    const found = conversations.find((c) => c.tutorId === tutor.tutorId);
+                    if (found) handleOpenConversation(found);
+                  }}
+                >
+                  <View style={styles.avatarWrapper}>
+                    <Image source={{ uri: tutor.avatar }} style={styles.quickAvatar} />
+                    <View style={styles.onlineBadge} />
+                  </View>
+                  <Text style={styles.quickName} numberOfLines={1}>{tutor.name}</Text>
+                </TouchableOpacity>
+              ))}
+
+              <TouchableOpacity
+                style={styles.quickTutor}
+                onPress={() => router.push("/(student)/NewMessage")}
+              >
+                <View style={styles.newRoomBtn}>
+                  <Ionicons name="person-add-outline" size={24} color="#2563EB" />
+                </View>
+                <Text style={styles.quickName}>New Chat</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </>
+        )}
 
         {/* --- RECENT CONVERSATIONS --- */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionHeaderTitle}>RECENT CONVERSATIONS</Text>
-          <TouchableOpacity>
-            <Text style={styles.markReadLink}>Mark all read</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.conversationsList}>
-          {CONVERSATIONS.map((conv) => (
-            <TouchableOpacity 
-              key={conv.id} 
-              style={styles.conversationCard}
-              onPress={() => router.push("/(student)/ChatConversation")}
-            >
-              <View style={styles.convAvatarWrapper}>
-                {conv.isGroup ? (
-                  <View style={styles.groupIconBg}>
-                    <Ionicons name="calculator-outline" size={24} color="#2563EB" />
-                  </View>
-                ) : (
-                  <Image source={{ uri: conv.avatar }} style={styles.convAvatar} />
-                )}
-                {conv.online && <View style={styles.onlineBadge} />}
-                {!conv.online && conv.isGroup && <View style={[styles.onlineBadge, { backgroundColor: '#CBD5E1' }]} />}
-              </View>
-
-              <View style={styles.convContent}>
-                <View style={styles.convTopRow}>
-                  <View style={styles.nameVerifiedRow}>
-                    <Text style={styles.convName}>{conv.name}</Text>
-                    {conv.verified && <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginLeft: 4 }} />}
-                  </View>
-                  <Text style={styles.convTime}>{conv.time}</Text>
-                </View>
-
-                <View style={styles.tagStatusRow}>
-                  <View style={styles.subjectTag}>
-                    <Text style={styles.subjectTagText}>{conv.subject}</Text>
-                  </View>
-                  {conv.status && (
-                    <Text style={styles.statusText}>• {conv.status}</Text>
-                  )}
-                </View>
-
-                <View style={styles.lastMessageRow}>
-                  <Text style={styles.lastMessage} numberOfLines={1}>
-                    {conv.isRead ? '✓✓ ' : ''}{conv.lastMessage}
-                  </Text>
-                  <View style={styles.convActions}>
-                    {conv.unread && (
-                      <View style={styles.unreadBadge}>
-                        <Text style={styles.unreadCount}>{conv.unread}</Text>
-                      </View>
-                    )}
-                    {conv.hasAttachment && <Ionicons name="attach-outline" size={18} color="#2563EB" />}
-                    {conv.isStarred && <Ionicons name="star-outline" size={18} color="#94A3B8" />}
-                    {conv.hasClock && <Ionicons name="time-outline" size={18} color="#94A3B8" />}
-                    {!conv.unread && !conv.hasAttachment && !conv.isStarred && !conv.hasClock && (
-                      <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
-                    )}
-                  </View>
-                </View>
-              </View>
+          {totalUnread > 0 && (
+            <TouchableOpacity onPress={handleMarkAllRead}>
+              <Text style={styles.markReadLink}>Mark all read</Text>
             </TouchableOpacity>
-          ))}
+          )}
         </View>
+
+        {loading ? (
+          <View style={{ paddingVertical: 40, alignItems: "center" }}>
+            <ActivityIndicator size="large" color="#2563EB" />
+            <Text style={{ marginTop: 12, color: "#64748B", fontSize: 13 }}>
+              Loading messages...
+            </Text>
+          </View>
+        ) : filteredConversations.length > 0 ? (
+          <View style={styles.conversationsList}>
+            {filteredConversations.map((conv) => (
+              <TouchableOpacity 
+                key={conv.id} 
+                style={styles.conversationCard}
+                onPress={() => handleOpenConversation(conv)}
+              >
+                <View style={styles.convAvatarWrapper}>
+                  <Image source={{ uri: conv.avatar }} style={styles.convAvatar} />
+                  {conv.online && <View style={styles.onlineBadge} />}
+                </View>
+
+                <View style={styles.convContent}>
+                  <View style={styles.convTopRow}>
+                    <View style={styles.nameVerifiedRow}>
+                      <Text style={styles.convName}>{conv.name}</Text>
+                      {conv.verified && (
+                        <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginLeft: 4 }} />
+                      )}
+                    </View>
+                    <Text style={styles.convTime}>{conv.time}</Text>
+                  </View>
+
+                  <View style={styles.tagStatusRow}>
+                    {conv.subject ? (
+                      <View style={styles.subjectTag}>
+                        <Text style={styles.subjectTagText}>{conv.subject}</Text>
+                      </View>
+                    ) : null}
+                    {conv.status ? (
+                      <Text style={styles.statusText}>• {conv.status}</Text>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.lastMessageRow}>
+                    <Text
+                      style={[
+                        styles.lastMessage,
+                        conv.unread > 0 && { color: "#0F172A", fontWeight: "700" },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {conv.isRead ? '✓✓ ' : ''}{conv.lastMessage}
+                    </Text>
+                    <View style={styles.convActions}>
+                      {conv.unread > 0 && (
+                        <View style={styles.unreadBadge}>
+                          <Text style={styles.unreadCount}>{conv.unread}</Text>
+                        </View>
+                      )}
+                      {conv.hasAttachment && (
+                        <Ionicons name="attach-outline" size={18} color="#2563EB" />
+                      )}
+                      {conv.unread === 0 && !conv.hasAttachment && (
+                        <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
+                      )}
+                    </View>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : (
+          <View style={{ paddingVertical: 40, alignItems: "center", paddingHorizontal: 20 }}>
+            <Ionicons name="chatbubbles-outline" size={48} color="#CBD5E1" />
+            <Text style={{ fontSize: 16, fontWeight: "700", color: "#334155", marginTop: 12 }}>
+              No messages found
+            </Text>
+            <Text style={{ fontSize: 13, color: "#94A3B8", textAlign: "center", marginTop: 6, lineHeight: 18 }}>
+              {searchQuery
+                ? `No conversations matching "${searchQuery}"`
+                : "When you book a session or message a tutor, your conversations will show up here."}
+            </Text>
+            <TouchableOpacity
+              style={{
+                marginTop: 16,
+                backgroundColor: "#2563EB",
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                borderRadius: 10,
+              }}
+              onPress={() => router.push("/(student)/searchscreen")}
+            >
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>
+                Find a Tutor
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* --- TUTORMATE TIP --- */}
         <View style={styles.tipCard}>

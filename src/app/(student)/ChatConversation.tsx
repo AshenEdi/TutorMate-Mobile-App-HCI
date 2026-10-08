@@ -1,8 +1,10 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useState, useRef } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Image,
+  KeyboardAvoidingView,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -12,12 +14,20 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  KeyboardAvoidingView,
 } from "react-native";
-import { inspectMessageSafety, logModerationFlag } from "../../services/moderationService";
 import { supabase } from "../../../lib/supabase";
+import { useAuth } from "../../context/AuthContext";
+import {
+  ChatMessageItem,
+  formatChatTime,
+  getConversationMessages,
+  getOrCreateConversation,
+  markConversationAsRead,
+  sendChatMessage,
+} from "../../services/chatService";
+import { inspectMessageSafety, logModerationFlag } from "../../services/moderationService";
 
-interface Message {
+interface DisplayMessage {
   id: string;
   text?: string;
   sender: "tutor" | "student";
@@ -28,84 +38,234 @@ interface Message {
   fileType?: string;
 }
 
-const INITIAL_MESSAGES: Message[] = [
-  {
-    id: "1",
-    text: "Hi Alex! Looking forward to our session on Saturday. Have you had a chance to work through the series convergence problem set?",
-    sender: "tutor",
-    time: "10:30 AM",
-    type: "text",
-  },
-  {
-    id: "2",
-    text: "Hi Dr. Jenkins! Yes, I got stuck on the Ratio Test and polar coordinates on questions 4 and 6.",
-    sender: "student",
-    time: "10:34 AM",
-    type: "text",
-  },
-  {
-    id: "3",
-    fileName: "polar_series_cheat_sheet.pdf",
-    fileSize: "1.8 MB",
-    fileType: "PDF",
-    sender: "tutor",
-    time: "10:37 AM",
-    type: "file",
-    text: "Take a look at page 2, this formula makes the convergence test much easier!",
-  },
-  {
-    id: "4",
-    text: "Awesome, downloading now! See you at 3 PM on Zoom.",
-    sender: "student",
-    time: "10:39 AM",
-    type: "text",
-  },
-];
-
 export default function ChatConversationScreen() {
   const router = useRouter();
-  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
+  const { user } = useAuth();
+  const params = useLocalSearchParams<{
+    id?: string;
+    tutorId?: string;
+    name?: string;
+    avatar?: string;
+    subject?: string;
+  }>();
+
+  const [activeConvId, setActiveConvId] = useState<string | null>(params.id || null);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [inputText, setInputText] = useState("");
   const [safetyWarning, setSafetyWarning] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [tutorDetails, setTutorDetails] = useState<{
+    id: string;
+    name: string;
+    avatar: string;
+    subject: string;
+  }>({
+    id: params.tutorId || "",
+    name: params.name || "Tutor",
+    avatar:
+      params.avatar ||
+      "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+    subject: params.subject || "Tutoring",
+  });
+  const [upcomingSession, setUpcomingSession] = useState<any>(null);
+
   const scrollViewRef = useRef<ScrollView>(null);
 
-  const handleSendMessage = async () => {
-    if (inputText.trim() === "") return;
+  // Initialize or fetch conversation ID & tutor info
+  useEffect(() => {
+    let isMounted = true;
 
-    const safety = inspectMessageSafety(inputText);
+    async function initConversation() {
+      try {
+        let convId = params.id;
+        let tutorId = params.tutorId;
+
+        // If no convId passed, try to find or create one with tutorId
+        if (!convId && tutorId && user?.id) {
+          convId = (await getOrCreateConversation(user.id, tutorId)) || undefined;
+          if (isMounted && convId) {
+            setActiveConvId(convId);
+          }
+        }
+
+        // If convId exists but tutorId is missing, fetch from conversations table
+        if (convId && !tutorId) {
+          const { data: convRow } = await supabase
+            .from("conversations")
+            .select("tutor_id")
+            .eq("id", convId)
+            .single();
+
+          if (convRow?.tutor_id) {
+            tutorId = convRow.tutor_id;
+          }
+        }
+
+        // Fetch tutor profile details
+        if (tutorId) {
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("id, full_name, avatar_url, specialty, education")
+            .eq("id", tutorId)
+            .single();
+
+          if (isMounted && prof) {
+            setTutorDetails({
+              id: prof.id,
+              name: prof.full_name || params.name || "Tutor",
+              avatar:
+                prof.avatar_url ||
+                params.avatar ||
+                "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+              subject: prof.specialty || prof.education || params.subject || "Tutoring",
+            });
+          }
+
+          // Check upcoming booking with this tutor
+          if (user?.id) {
+            const { data: booking } = await supabase
+              .from("bookings")
+              .select("*")
+              .eq("student_id", user.id)
+              .eq("tutor_id", tutorId)
+              .in("status", ["confirmed", "accepted"])
+              .order("session_date", { ascending: true })
+              .limit(1)
+              .maybeSingle();
+
+            if (isMounted && booking) {
+              setUpcomingSession(booking);
+            }
+          }
+        }
+
+        if (isMounted && convId) {
+          setActiveConvId(convId);
+        }
+      } catch (err) {
+        console.warn("Error initializing chat:", err);
+      }
+    }
+
+    initConversation();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [params.id, params.tutorId, user?.id]);
+
+  // Load messages and poll for incoming tutor messages
+  useEffect(() => {
+    if (!activeConvId) {
+      setLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    async function fetchMessages() {
+      if (!activeConvId) return;
+      const raw = await getConversationMessages(activeConvId);
+      if (!isMounted) return;
+
+      const formatted: DisplayMessage[] = raw.map((m) => {
+        const isFromStudent = m.sender_id === user?.id;
+        return {
+          id: m.id,
+          text: m.content,
+          sender: isFromStudent ? "student" : "tutor",
+          time: formatChatTime(m.created_at),
+          type: m.attachment_url ? "file" : "text",
+          fileName: m.attachment_name || "Attachment",
+          fileSize: "1.2 MB",
+          fileType: "PDF",
+        };
+      });
+
+      setMessages(formatted);
+      setLoading(false);
+
+      if (user?.id) {
+        void markConversationAsRead(activeConvId, user.id);
+      }
+    }
+
+    fetchMessages();
+
+    // Poll every 3 seconds to pick up new tutor messages in real-time
+    const interval = setInterval(fetchMessages, 3000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [activeConvId, user?.id]);
+
+  const handleSendMessage = async () => {
+    const textToSend = inputText.trim();
+    if (!textToSend || !user?.id || !activeConvId || sending) return;
+
+    const safety = inspectMessageSafety(textToSend);
     if (safety.flagged) {
       setSafetyWarning(
         "For your security, keep communication and payments within TutorMate to protect your 100% Student Guarantee."
       );
 
-      // Log moderation flag to Admin Queue asynchronously
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        void logModerationFlag({
-          flaggedUserId: user.id,
-          flaggedUserName: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Student',
-          subject: 'Safety Filter: Payment / Contact Bypass',
-          flagType: 'payment_bypass',
-          messageContent: inputText.trim(),
-          calloutDescription: safety.calloutDescription || 'Off-platform contact info detected in chat.',
-          priority: 'high',
-        });
-      }
+      void logModerationFlag({
+        flaggedUserId: user.id,
+        flaggedUserName: user.user_metadata?.full_name || user.email?.split("@")[0] || "Student",
+        subject: "Safety Filter: Payment / Contact Bypass",
+        flagType: "payment_bypass",
+        messageContent: textToSend,
+        calloutDescription: safety.calloutDescription || "Off-platform contact info detected in chat.",
+        priority: "high",
+      });
     } else {
       setSafetyWarning(null);
     }
 
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      text: inputText,
+    setSending(true);
+    setInputText("");
+
+    // Optimistically add to UI
+    const optimisticMsg: DisplayMessage = {
+      id: `temp-${Date.now()}`,
+      text: textToSend,
       sender: "student",
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: "Just now",
       type: "text",
     };
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 50);
 
-    setMessages([...messages, newMessage]);
-    setInputText("");
-    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+    try {
+      const res = await sendChatMessage({
+        conversationId: activeConvId,
+        senderId: user.id,
+        content: textToSend,
+        recipientId: tutorDetails.id || undefined,
+      });
+
+      if (res.success && res.data) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === optimisticMsg.id
+              ? {
+                  ...m,
+                  id: res.data!.id,
+                  time: formatChatTime(res.data!.created_at),
+                }
+              : m
+          )
+        );
+      }
+    } catch (err) {
+      console.warn("Error sending message:", err);
+    } finally {
+      setSending(false);
+      setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+    }
   };
 
   return (
@@ -127,18 +287,20 @@ export default function ChatConversationScreen() {
       </View>
 
       {safetyWarning ? (
-        <View style={{
-          backgroundColor: '#FFFBEB',
-          paddingHorizontal: 16,
-          paddingVertical: 10,
-          borderBottomWidth: 1,
-          borderBottomColor: '#FDE68A',
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-        }}>
+        <View
+          style={{
+            backgroundColor: "#FFFBEB",
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderBottomWidth: 1,
+            borderBottomColor: "#FDE68A",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
           <Ionicons name="alert-circle" size={18} color="#D97706" />
-          <Text style={{ fontSize: 11.5, color: '#92400E', flex: 1, lineHeight: 16 }}>
+          <Text style={{ fontSize: 11.5, color: "#92400E", flex: 1, lineHeight: 16 }}>
             {safetyWarning}
           </Text>
           <TouchableOpacity onPress={() => setSafetyWarning(null)}>
@@ -147,7 +309,7 @@ export default function ChatConversationScreen() {
         </View>
       ) : null}
 
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
       >
@@ -155,25 +317,26 @@ export default function ChatConversationScreen() {
           ref={scrollViewRef}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
+          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: false })}
         >
           {/* --- TUTOR HEADER SECTION --- */}
           <View style={styles.tutorHeader}>
             <View style={styles.tutorHeaderMain}>
               <View style={styles.avatarWrapper}>
                 <Image
-                  source={{ uri: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop" }}
+                  source={{ uri: tutorDetails.avatar }}
                   style={styles.headerAvatar}
                 />
                 <View style={styles.onlineBadge} />
               </View>
               <View style={styles.tutorInfo}>
                 <View style={styles.nameRow}>
-                  <Text style={styles.tutorName}>Dr. Sarah Jenkins</Text>
+                  <Text style={styles.tutorName}>{tutorDetails.name}</Text>
                   <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginLeft: 4 }} />
                 </View>
                 <View style={styles.statusRow}>
                   <View style={[styles.onlineBadgeSmall]} />
-                  <Text style={styles.statusText}>Online • Typically replies in 5m</Text>
+                  <Text style={styles.statusText}>{tutorDetails.subject} • Active</Text>
                 </View>
               </View>
             </View>
@@ -190,49 +353,79 @@ export default function ChatConversationScreen() {
             </View>
           </View>
 
-          {/* --- NEXT SESSION CARD --- */}
-          <View style={styles.sessionCard}>
-            <View style={styles.sessionHeader}>
-              <View style={styles.sessionIconBg}>
-                <Ionicons name="calendar" size={20} color="#FFFFFF" />
-              </View>
-              <View style={styles.sessionTitleCol}>
-                <View style={styles.sessionTagRow}>
-                  <Text style={styles.nextSessionTag}>NEXT SESSION</Text>
-                  <Text style={styles.subjectTag}>• AP Calculus BC</Text>
+          {/* --- NEXT SESSION CARD (if booked) --- */}
+          {upcomingSession && (
+            <View style={styles.sessionCard}>
+              <View style={styles.sessionHeader}>
+                <View style={styles.sessionIconBg}>
+                  <Ionicons name="calendar" size={20} color="#FFFFFF" />
                 </View>
-                <Text style={styles.sessionTime}>Saturday, Mar 18 • 3:00 PM</Text>
+                <View style={styles.sessionTitleCol}>
+                  <View style={styles.sessionTagRow}>
+                    <Text style={styles.nextSessionTag}>UPCOMING SESSION</Text>
+                    <Text style={styles.subjectTag}>• {upcomingSession.subject || tutorDetails.subject}</Text>
+                  </View>
+                  <Text style={styles.sessionTime}>
+                    {upcomingSession.session_date} • {upcomingSession.time_slot || "60 min"}
+                  </Text>
+                </View>
+                <View style={styles.confirmedBadge}>
+                  <Text style={styles.confirmedText}>Confirmed</Text>
+                </View>
               </View>
-              <View style={styles.confirmedBadge}>
-                <Text style={styles.confirmedText}>Confirmed</Text>
+              <View style={styles.sessionActions}>
+                <TouchableOpacity
+                  style={styles.rescheduleBtn}
+                  onPress={() => router.push("/(student)/MySessions")}
+                >
+                  <Text style={styles.rescheduleText}>View Sessions</Text>
+                </TouchableOpacity>
               </View>
             </View>
-            <View style={styles.sessionActions}>
-              <TouchableOpacity style={styles.rescheduleBtn}>
-                <Text style={styles.rescheduleText}>Reschedule</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.detailsBtn}>
-                <Text style={styles.detailsText}>Session Details →</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          )}
 
           {/* --- DATE DIVIDER --- */}
           <View style={styles.dateDivider}>
             <View style={styles.datePill}>
-              <Text style={styles.dateText}>Today, March 15</Text>
+              <Text style={styles.dateText}>Chat Stream</Text>
             </View>
           </View>
 
-          {/* --- MESSAGES --- */}
+          {/* --- LOADING INDICATOR --- */}
+          {loading && (
+            <View style={{ paddingVertical: 30, alignItems: "center" }}>
+              <ActivityIndicator size="small" color="#2563EB" />
+              <Text style={{ marginTop: 8, fontSize: 12, color: "#64748B" }}>
+                Loading conversation...
+              </Text>
+            </View>
+          )}
+
+          {/* --- MESSAGES EMPTY --- */}
+          {!loading && messages.length === 0 && (
+            <View style={{ paddingVertical: 40, alignItems: "center" }}>
+              <Ionicons name="chatbubble-ellipses-outline" size={40} color="#CBD5E1" />
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#64748B", marginTop: 8 }}>
+                No messages yet
+              </Text>
+              <Text style={{ fontSize: 12, color: "#94A3B8", marginTop: 4 }}>
+                Say hello to {tutorDetails.name} to start your lesson!
+              </Text>
+            </View>
+          )}
+
+          {/* --- MESSAGES LIST --- */}
           {messages.map((msg) => (
-            <View key={msg.id} style={[
-              styles.messageRow,
-              msg.sender === "student" ? styles.studentRow : styles.tutorRow
-            ]}>
+            <View
+              key={msg.id}
+              style={[
+                styles.messageRow,
+                msg.sender === "student" ? styles.studentRow : styles.tutorRow,
+              ]}
+            >
               {msg.sender === "tutor" && (
                 <Image
-                  source={{ uri: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop" }}
+                  source={{ uri: tutorDetails.avatar }}
                   style={styles.messageAvatar}
                 />
               )}
@@ -252,22 +445,28 @@ export default function ChatConversationScreen() {
                   </View>
                 )}
                 {msg.text && (
-                  <View style={[
-                    styles.messageBubble,
-                    msg.sender === "student" ? styles.studentBubble : styles.tutorBubble
-                  ]}>
-                    <Text style={[
-                      styles.messageText,
-                      msg.sender === "student" ? styles.studentText : styles.tutorText
-                    ]}>
+                  <View
+                    style={[
+                      styles.messageBubble,
+                      msg.sender === "student" ? styles.studentBubble : styles.tutorBubble,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.messageText,
+                        msg.sender === "student" ? styles.studentText : styles.tutorText,
+                      ]}
+                    >
                       {msg.text}
                     </Text>
                   </View>
                 )}
-                <View style={[
-                  styles.timeRow,
-                  msg.sender === "student" ? styles.studentTimeRow : styles.tutorTimeRow
-                ]}>
+                <View
+                  style={[
+                    styles.timeRow,
+                    msg.sender === "student" ? styles.studentTimeRow : styles.tutorTimeRow,
+                  ]}
+                >
                   <Text style={styles.messageTime}>{msg.time}</Text>
                   {msg.sender === "student" && (
                     <Ionicons name="checkmark-done" size={16} color="#2563EB" style={{ marginLeft: 4 }} />
@@ -276,34 +475,30 @@ export default function ChatConversationScreen() {
               </View>
             </View>
           ))}
-
-          {/* --- TYPING INDICATOR --- */}
-          <View style={styles.typingRow}>
-            <Image
-              source={{ uri: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop" }}
-              style={styles.messageAvatar}
-            />
-            <View style={styles.typingBubble}>
-              <Text style={styles.typingText}>Dr. Sarah is typing <Text style={{ color: '#2563EB', fontWeight: 'bold' }}>•••</Text></Text>
-            </View>
-          </View>
         </ScrollView>
 
         {/* --- QUICK REPLY CHIPS --- */}
         <View style={styles.quickReplyContainer}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickReplyScroll}>
-            <TouchableOpacity style={styles.quickReplyChip}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.quickReplyScroll}
+          >
+            <TouchableOpacity
+              style={styles.quickReplyChip}
+              onPress={() => setInputText("Hi! Can we review the homework questions?")}
+            >
               <Ionicons name="bulb-outline" size={14} color="#64748B" style={{ marginRight: 6 }} />
-              <Text style={styles.quickReplyText}>Can we review problem 4 first?</Text>
+              <Text style={styles.quickReplyText}>Can we review the homework questions?</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.quickReplyChip}>
+            <TouchableOpacity
+              style={styles.quickReplyChip}
+              onPress={() => setInputText("Got it, thank you!")}
+            >
               <Ionicons name="thumbs-up-outline" size={14} color="#64748B" style={{ marginRight: 6 }} />
               <Text style={styles.quickReplyText}>Got it, thank you!</Text>
             </TouchableOpacity>
           </ScrollView>
-          <TouchableOpacity style={styles.keyboardBtn}>
-            <Ionicons name="keypad-outline" size={20} color="#64748B" />
-          </TouchableOpacity>
         </View>
 
         {/* --- BOTTOM INPUT BAR --- */}
@@ -320,14 +515,11 @@ export default function ChatConversationScreen() {
               onChangeText={setInputText}
               multiline
             />
-            <TouchableOpacity style={styles.micBtn}>
-              <Ionicons name="mic-outline" size={20} color="#64748B" />
-            </TouchableOpacity>
           </View>
           <TouchableOpacity 
-            style={[styles.sendBtn, !inputText.trim() && { opacity: 0.5 }]} 
+            style={[styles.sendBtn, (!inputText.trim() || sending) && { opacity: 0.5 }]} 
             onPress={handleSendMessage}
-            disabled={!inputText.trim()}
+            disabled={!inputText.trim() || sending}
           >
             <Ionicons name="send" size={20} color="#FFFFFF" />
           </TouchableOpacity>
