@@ -6,6 +6,12 @@ import { Platform } from 'react-native';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    'Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.'
+  );
+}
+
 // SSR-safe storage adapter for Expo Router static rendering on web/Node.js
 const ExpoAuthStorage = {
   getItem: (key: string) => {
@@ -36,4 +42,3 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 });
-

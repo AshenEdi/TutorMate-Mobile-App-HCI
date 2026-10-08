@@ -1,7 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { supabase } from "../../../lib/supabase";
 import {
-  Image,
+  ActivityIndicator,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -12,37 +14,119 @@ import {
   View,
 } from "react-native";
 
+interface BookingDetails {
+  booking_ref: string | null;
+  tutor_id: string | null;
+  tutor_name: string | null;
+  subject: string | null;
+  session_date: string | null;
+  time_slot: string | null;
+  duration: number | null;
+  delivery_format: string | null;
+  status: string | null;
+  total_price: number | null;
+}
+
 export default function BookingConfirmedScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
-    bookingRef?: string;
-    tutorName?: string;
-    tutorAvatar?: string;
-    subject?: string;
-    timeSlot?: string;
-    dateKey?: string;
-    price?: string;
-    focusText?: string;
+    bookingRef?: string | string[];
   }>();
+  const bookingRef = Array.isArray(params.bookingRef)
+    ? params.bookingRef[0]
+    : params.bookingRef;
 
-  const bookingRef = params.bookingRef || "TM-89420-BC";
-  const tutorName = params.tutorName || "Dr. Sarah Jenkins";
-  const tutorAvatar = params.tutorAvatar || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
-  const subject = params.subject || "AP Calculus BC";
-  const timeSlot = params.timeSlot || "3:30 PM – 4:30 PM EDT";
-  const focusNotes = params.focusText || "Taylor series convergence tests & FRQ practice";
-  const paymentTotal = params.price ? `$${params.price}.00` : "$45.00";
+  const [booking, setBooking] = useState<BookingDetails | null>(null);
+  const [loading, setLoading] = useState(Boolean(bookingRef));
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  let dateMonth = "MAR";
-  let dateNum = "16";
-  if (params.dateKey) {
-    const parts = params.dateKey.split("-");
+  useEffect(() => {
+    let isMounted = true;
+    if (!bookingRef) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    async function fetchBooking() {
+      try {
+        const { data, error } = await supabase
+          .from("bookings")
+          .select("*")
+          .eq("booking_ref", bookingRef)
+          .single();
+        if (error) throw error;
+        if (isMounted) {
+          setBooking({
+            booking_ref: data.booking_ref,
+            tutor_id: data.tutor_id,
+            tutor_name: data.tutor_name,
+            subject: data.subject,
+            session_date: data.session_date,
+            time_slot: data.time_slot,
+            duration: data.duration == null ? null : Number(data.duration),
+            delivery_format: data.delivery_format,
+            status: data.status,
+            total_price: data.total_price == null ? null : Number(data.total_price),
+          });
+        }
+      } catch (error) {
+        console.error("Failed to load confirmed booking:", error);
+        if (isMounted) setErrorMessage("No booking found");
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    void fetchBooking();
+    return () => {
+      isMounted = false;
+    };
+  }, [bookingRef]);
+
+  const totalPrice = booking?.total_price ?? 0;
+  const paymentTotal = `$${totalPrice.toFixed(2)}`;
+  const dateKey = booking?.session_date;
+
+  let dateMonth = "—";
+  let dateNum = "—";
+  if (dateKey) {
+    const parts = dateKey.split("-");
     if (parts.length === 3) {
       const dObj = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
       dateMonth = dObj.toLocaleDateString("en-US", { month: "short" }).toUpperCase();
       dateNum = String(dObj.getDate());
     }
   }
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ActivityIndicator size="large" color="#2563EB" />
+      </SafeAreaView>
+    );
+  }
+
+  const pageError = errorMessage || (!bookingRef ? "No booking found" : null);
+  if (pageError || !booking) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <Text style={styles.heroTitle}>{pageError || "No booking found"}</Text>
+        <TouchableOpacity
+          style={styles.returnBtn}
+          onPress={() => router.push("/(student)/dashboard")}
+        >
+          <Text style={styles.returnText}>Go to Dashboard</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
+  const tutorName = booking.tutor_name || "—";
+  const subject = booking.subject || "—";
+  const timeSlot = booking.time_slot || "—";
+  const bookingStatus = booking.status || "—";
 
   return (
     <SafeAreaView style={styles.container}>
@@ -89,17 +173,17 @@ export default function BookingConfirmedScreen() {
           
           <View style={styles.confirmedPill}>
             <Ionicons name="checkmark" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
-            <Text style={styles.confirmedPillText}>Confirmed</Text>
+            <Text style={styles.confirmedPillText}>{bookingStatus}</Text>
           </View>
 
           <View style={styles.refRow}>
-            <Text style={styles.refText}>Ref #: {bookingRef}</Text>
+            <Text style={styles.refText}>Ref #: {booking.booking_ref || "—"}</Text>
             <TouchableOpacity style={{ marginLeft: 6 }}>
               <Ionicons name="copy-outline" size={14} color="#64748B" />
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.heroTitle}>Booking Confirmed!</Text>
+          <Text style={styles.heroTitle}>{bookingStatus}</Text>
           <Text style={styles.heroSubtitle}>
             You&apos;re all set for mastery with {tutorName}.
           </Text>
@@ -119,7 +203,7 @@ export default function BookingConfirmedScreen() {
                 <Text style={styles.timeText}>{timeSlot}</Text>
               </View>
               <Text style={styles.subjectText}>{subject}</Text>
-              <Text style={styles.focusText}>{focusNotes}</Text>
+              <Text style={styles.focusText}>{booking.delivery_format || "—"}</Text>
             </View>
           </View>
           
@@ -127,8 +211,7 @@ export default function BookingConfirmedScreen() {
           
           <View style={styles.tutorRow}>
             <View style={styles.avatarWrapper}>
-              <Image source={{ uri: tutorAvatar }} style={styles.tutorAvatar} />
-              <View style={styles.onlineBadge} />
+              <Ionicons name="person-circle-outline" size={40} color="#64748B" />
             </View>
             <View style={styles.tutorInfo}>
               <View style={styles.nameRow}>
@@ -137,7 +220,7 @@ export default function BookingConfirmedScreen() {
               </View>
               <View style={styles.statusRow}>
                 <View style={styles.greenDot} />
-                <Text style={styles.statusText}>Online • Typically replies in 5m</Text>
+                <Text style={styles.statusText}>{bookingStatus}</Text>
               </View>
             </View>
             <TouchableOpacity 
@@ -165,21 +248,23 @@ export default function BookingConfirmedScreen() {
           <View style={styles.divider} />
 
           <View style={styles.paymentRow}>
-            <Text style={styles.paymentLabel}>1 Hr {subject} Tutoring</Text>
+            <Text style={styles.paymentLabel}>
+              {booking.duration ?? "—"} min {subject} Tutoring
+            </Text>
             <Text style={styles.paymentValue}>{paymentTotal}</Text>
           </View>
           
           <View style={styles.paymentRow}>
-            <Text style={styles.paymentLabel}>Platform & Whiteboard Fee</Text>
-            <Text style={styles.freeBadge}>INCLUDED FREE</Text>
+            <Text style={styles.paymentLabel}>Delivery format</Text>
+            <Text style={styles.paymentValue}>{booking.delivery_format || "—"}</Text>
           </View>
 
           <View style={styles.divider} />
 
           <View style={styles.paymentRow}>
             <View style={styles.walletPaidRow}>
-              <Ionicons name="wallet-outline" size={14} color="#64748B" style={{ marginRight: 6 }} />
-              <Text style={styles.paymentLabel}>Paid via Student Learning Wallet</Text>
+              <Ionicons name="receipt-outline" size={14} color="#64748B" style={{ marginRight: 6 }} />
+              <Text style={styles.paymentLabel}>Booking total</Text>
             </View>
             <Text style={styles.paymentValue}>-{paymentTotal}</Text>
           </View>
@@ -189,9 +274,9 @@ export default function BookingConfirmedScreen() {
           <View style={styles.remainingCard}>
             <View style={styles.remainingLeft}>
               <Ionicons name="checkmark-circle" size={18} color="#10B981" style={{ marginRight: 8 }} />
-              <Text style={styles.remainingLabel}>Remaining Wallet Balance</Text>
+              <Text style={styles.remainingLabel}>Booking status</Text>
             </View>
-            <Text style={styles.remainingValue}>$75.00</Text>
+            <Text style={styles.remainingValue}>{bookingStatus}</Text>
           </View>
         </View>
 

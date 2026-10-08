@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import {
+    Alert,
     Image,
     Platform,
     SafeAreaView,
@@ -16,6 +17,8 @@ import {
     View,
 } from "react-native";
 
+const DEFAULT_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
+
 interface TutorDetails {
   id: string;
   name: string;
@@ -27,9 +30,32 @@ interface TutorDetails {
   subjects: string[];
 }
 
+interface StudentWalletProfile {
+  full_name: string | null;
+  wallet_balance: number;
+}
+
+interface TutorProfile {
+  id: string;
+  full_name: string | null;
+  specialty: string | null;
+  hourly_rate: number | string | null;
+  avatar_url: string | null;
+}
+
 export default function SessionBookingScreen() {
   const router = useRouter();
-  const { tutorId } = useLocalSearchParams<{ tutorId?: string }>();
+  const showMessage = (title: string, message: string, onOk?: () => void) => {
+    if (Platform.OS === "web") {
+      window.alert(`${title}\n\n${message}`);
+      onOk?.();
+    } else {
+      Alert.alert(title, message, [{ text: "OK", onPress: onOk }]);
+    }
+  };
+
+  const params = useLocalSearchParams<{ tutorId?: string | string[] }>();
+  const tutorId = Array.isArray(params.tutorId) ? params.tutorId[0] : params.tutorId;
 
   const [delivery, setDelivery] = useState("whiteboard");
   const [focusText, setFocusText] = useState("");
@@ -37,20 +63,63 @@ export default function SessionBookingScreen() {
   const [selectedDateIdx, setSelectedDateIdx] = useState(0);
   const [selectedLengthIdx, setSelectedLengthIdx] = useState(1);
   const [selectedSlotIdx, setSelectedSlotIdx] = useState(0);
+  const [userProfile, setUserProfile] = useState<StudentWalletProfile | null>(null);
+  const [tutorProfile, setTutorProfile] = useState<TutorProfile | null>(null);
+  const [booking, setBooking] = useState(false);
+  const [walletLoading, setWalletLoading] = useState(true);
 
-  const [tutor, setTutor] = useState<TutorDetails>({
-    id: tutorId || "demo-tutor-1",
-    name: "Dr. Sarah Jenkins",
-    avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+  const tutor: TutorDetails = {
+    id: tutorProfile?.id || tutorId || "",
+    name: tutorProfile?.full_name || "Tutor",
+    avatar: tutorProfile?.avatar_url || DEFAULT_AVATAR,
     verified: true,
     online: true,
     replyTime: "5m",
-    hourlyRate: 45,
-    subjects: ["AP Calculus BC", "Differential Equations", "Algebra II"],
-  });
+    hourlyRate: Number(tutorProfile?.hourly_rate) || 45,
+    subjects: [tutorProfile?.specialty || "General"],
+  };
 
   const [availabilityMap, setAvailabilityMap] = useState<Record<string, { morning: boolean; afternoon: boolean; evening: boolean }>>({});
-  const [bookedSlotsList, setBookedSlotsList] = useState<Array<{ tutorId: string; date: string; timeSlot: string }>>([]);
+  const [bookedSlotsList, setBookedSlotsList] = useState<{ tutorId: string; date: string; timeSlot: string }[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadStudentProfile() {
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError) throw userError;
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("full_name, wallet_balance")
+          .eq("id", user.id)
+          .single();
+        if (error) throw error;
+
+        if (isMounted) {
+          setUserProfile({
+            full_name: data.full_name,
+            wallet_balance: data.wallet_balance == null ? 0 : Number(data.wallet_balance),
+          });
+        }
+      } catch (error) {
+        console.error("Failed to load student wallet:", error);
+        showMessage("Error", "Unable to load your wallet balance.");
+      } finally {
+        if (isMounted) setWalletLoading(false);
+      }
+    }
+
+    loadStudentProfile();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Fetch tutor profile and availability from Supabase by tutor_id
   useEffect(() => {
@@ -58,40 +127,19 @@ export default function SessionBookingScreen() {
 
     async function loadTutorAndAvailability() {
       try {
-        const targetId = tutorId || "demo-tutor-1";
+        if (!tutorId) {
+          router.back();
+          return;
+        }
 
         // 1. Fetch tutor profile from Supabase
-        const { data: prof } = await supabase
+        const { data: prof, error: profileError } = await supabase
           .from("profiles")
-          .select("*")
-          .eq("id", targetId)
-          .maybeSingle();
-
-        // Fallback checks from AsyncStorage
-        let savedEditProf: any = null;
-        try {
-          const editStr = await AsyncStorage.getItem("@tutormate_tutor_edit_profile");
-          if (editStr) savedEditProf = JSON.parse(editStr);
-        } catch {}
-
-        if (prof && isMounted) {
-          const name = prof.full_name || prof.name || savedEditProf?.fullName || "Dr. Sarah Jenkins";
-          const avatar = prof.avatar_url || prof.avatarUrl || savedEditProf?.avatarUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
-          const rate = Number(prof.hourly_rate) || Number(savedEditProf?.hourlyRate) || 45;
-          const specialty = prof.specialty || prof.title || prof.bio || "AP Calculus BC";
-          const subjList = Array.isArray(prof.subjects) ? prof.subjects : [specialty, "Differential Equations", "Algebra II"];
-
-          setTutor({
-            id: targetId,
-            name,
-            avatar,
-            verified: true,
-            online: true,
-            replyTime: "5m",
-            hourlyRate: rate,
-            subjects: subjList,
-          });
-        }
+          .select("id, full_name, specialty, hourly_rate, avatar_url")
+          .eq("id", tutorId)
+          .single();
+        if (profileError) throw profileError;
+        if (isMounted) setTutorProfile(prof);
 
         // 2. Fetch availability for this tutor_id from Supabase tutor_availability table
         const now = new Date();
@@ -100,7 +148,7 @@ export default function SessionBookingScreen() {
         const { data: availRows } = await supabase
           .from("tutor_availability")
           .select("*")
-          .eq("tutor_id", targetId)
+          .eq("tutor_id", tutorId)
           .gte("date", todayStr);
 
         const map: Record<string, { morning: boolean; afternoon: boolean; evening: boolean }> = {};
@@ -146,7 +194,7 @@ export default function SessionBookingScreen() {
           const { data: dbBooked } = await supabase
             .from("bookings")
             .select("*")
-            .eq("tutor_id", targetId)
+            .eq("tutor_id", tutorId)
             .neq("status", "cancelled");
 
           if (dbBooked && isMounted) {
@@ -181,7 +229,7 @@ export default function SessionBookingScreen() {
     return () => {
       isMounted = false;
     };
-  }, [tutorId]);
+  }, [router, tutorId]);
 
   // Generate 5 upcoming dates starting today
   const upcomingDates = Array.from({ length: 5 }).map((_, idx) => {
@@ -243,105 +291,154 @@ export default function SessionBookingScreen() {
     ? Math.round(tutor.hourlyRate * 1.5)
     : tutor.hourlyRate;
 
-const isValidUUID = (str?: string): boolean =>
-  !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
-
   const handleConfirm = async () => {
-    let bookingRef = "TM-" + Math.floor(100000 + Math.random() * 900000);
-
+    setBooking(true);
     try {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-
-      // Ensure valid UUIDs for Postgres UUID column requirements
-      let dbTutorId = tutor.id;
-      if (!isValidUUID(dbTutorId)) {
-        const { data: prof } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('role', 'tutor')
-          .limit(1)
-          .maybeSingle();
-
-        if (prof?.id && isValidUUID(prof.id)) {
-          dbTutorId = prof.id;
-        } else {
-          dbTutorId = "a0000000-0000-0000-0000-000000000001";
-        }
+      const bookingTutorId = tutorId || tutorProfile?.id;
+      if (!bookingTutorId) {
+        showMessage("Error", "A tutor is required to book a session.");
+        return;
       }
 
-      let dbStudentId: string | null = currentUser?.id || null;
-      if (dbStudentId && !isValidUUID(dbStudentId)) {
-        dbStudentId = null;
+      if ((userProfile?.wallet_balance ?? 0) < numericPrice) {
+        showMessage(
+          "Insufficient Balance",
+          `Your wallet has $${(userProfile?.wallet_balance ?? 0).toFixed(2)} but this session costs $${numericPrice.toFixed(2)}. Please add funds to continue.`,
+        );
+        return;
       }
 
-      const newBookingData = {
-        tutor_id: dbTutorId,
-        student_id: dbStudentId,
-        student_name: currentUser?.user_metadata?.full_name || currentUser?.email?.split('@')[0] || "Student",
-        tutor_name: tutor.name,
-        subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
-        focus_notes: focusText || "",
+      const {
+        data: { user: currentUser },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!currentUser) {
+        showMessage("Error", "Please sign in to book a session.");
+        return;
+      }
+
+      const { data: newBooking, error: bookingError } = await supabase
+        .from("bookings")
+        .insert({
+        tutor_id: bookingTutorId,
+        student_id: currentUser.id,
+        student_name: userProfile?.full_name || currentUser.user_metadata?.full_name || currentUser.email?.split("@")[0] || "Student",
+        tutor_name: tutorProfile?.full_name || "Tutor",
+        subject: tutorProfile?.specialty || "General",
+        focus_notes: focusText || "Custom Tutoring Session",
         session_date: dateKey,
         time_slot: selectedSlotText,
         duration: selectedLengthObj.time,
         delivery_format: delivery,
-        hourly_rate: tutor.hourlyRate,
+        hourly_rate: Number(tutorProfile?.hourly_rate) || 45,
         total_price: numericPrice,
         status: "confirmed",
-      };
-
-      const { data: dbBooking, error: dbError } = await supabase
-        .from("bookings")
-        .insert([newBookingData])
+      })
         .select()
-        .maybeSingle();
-
-      if (dbError) {
-        console.error("Supabase Booking Insert Error:", dbError.message, dbError.details, dbError.hint);
-      } else if (dbBooking?.booking_ref) {
-        bookingRef = dbBooking.booking_ref;
-        console.log("Booking stored successfully in Supabase DB! Ref:", dbBooking.booking_ref);
+        .single();
+      if (bookingError) throw bookingError;
+      if (!newBooking.booking_ref) {
+        const { error: rollbackBookingError } = await supabase
+          .from("bookings")
+          .delete()
+          .eq("id", newBooking.id);
+        if (rollbackBookingError) {
+          console.error("Failed to remove booking without a reference:", rollbackBookingError);
+        }
+        throw new Error("The booking was saved without a booking reference.");
       }
 
-      // Local storage backup
-      const localBooking = {
-        id: dbBooking?.id || `b_${Date.now()}`,
-        bookingRef,
-        tutorId: tutor.id,
-        tutorName: tutor.name,
-        tutorAvatar: tutor.avatar,
-        date: dateKey,
-        timeSlot: selectedSlotText,
-        subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
-        focusText,
-        price: numericPrice,
-        duration: selectedLengthObj.time,
-        deliveryFormat: delivery,
-        status: "confirmed",
-        createdAt: new Date().toISOString(),
-      };
+      const newBalance = (userProfile?.wallet_balance ?? 0) - numericPrice;
+      const { error: balanceError } = await supabase
+        .from("profiles")
+        .update({ wallet_balance: newBalance })
+        .eq("id", currentUser.id);
+      if (balanceError) {
+        const { error: rollbackBookingError } = await supabase
+          .from("bookings")
+          .delete()
+          .eq("id", newBooking.id);
+        if (rollbackBookingError) {
+          console.error("Failed to remove booking after wallet update failed:", rollbackBookingError);
+        }
+        throw balanceError;
+      }
 
-      const existingStr = await AsyncStorage.getItem("@tutormate_booked_sessions");
-      const existingList = existingStr ? JSON.parse(existingStr) : [];
-      existingList.push(localBooking);
-      await AsyncStorage.setItem("@tutormate_booked_sessions", JSON.stringify(existingList));
-    } catch (e) {
-      console.warn("Failed to persist booking to database:", e);
+      const { error: transactionError } = await supabase
+        .from("wallet_transactions")
+        .insert({
+          user_id: currentUser.id,
+          amount: -numericPrice,
+          type: "payment",
+          description: `Booking ${newBooking.booking_ref}`,
+          booking_id: newBooking.id,
+        });
+      if (transactionError) {
+        const { error: rollbackBalanceError } = await supabase
+          .from("profiles")
+          .update({ wallet_balance: userProfile?.wallet_balance ?? 0 })
+          .eq("id", currentUser.id);
+        const { error: rollbackBookingError } = await supabase
+          .from("bookings")
+          .delete()
+          .eq("id", newBooking.id);
+        if (rollbackBalanceError || rollbackBookingError) {
+          console.error("Failed to roll back booking payment:", {
+            balanceError: rollbackBalanceError,
+            bookingError: rollbackBookingError,
+          });
+        }
+        throw transactionError;
+      }
+
+      try {
+        const storedBookings = await AsyncStorage.getItem("@tutormate_booked_sessions");
+        const localBookings = storedBookings ? JSON.parse(storedBookings) : [];
+        localBookings.push({
+          id: newBooking.id,
+          bookingRef: newBooking.booking_ref,
+          studentId: currentUser.id,
+          tutorId: bookingTutorId,
+          tutorName: tutor.name,
+          tutorAvatar: tutor.avatar,
+          date: dateKey,
+          timeSlot: selectedSlotText,
+          subject: tutorProfile?.specialty || "General",
+          focusText,
+          price: numericPrice,
+          duration: selectedLengthObj.time,
+          deliveryFormat: delivery,
+          status: "confirmed",
+          createdAt: new Date().toISOString(),
+        });
+        await AsyncStorage.setItem("@tutormate_booked_sessions", JSON.stringify(localBookings));
+      } catch (storageError) {
+        console.warn("Could not save local booking cache:", storageError);
+      }
+
+      setUserProfile((previous) =>
+        previous ? { ...previous, wallet_balance: newBalance } : previous,
+      );
+      router.push({
+        pathname: "/(student)/BookingConfirmed",
+        params: {
+          bookingRef: newBooking.booking_ref,
+          tutorName: tutorProfile?.full_name || "Tutor",
+          tutorAvatar: tutor.avatar,
+          subject: tutorProfile?.specialty || "General",
+          timeSlot: selectedSlotText,
+          dateKey,
+          price: String(numericPrice),
+          focusText,
+        },
+      });
+    } catch (error) {
+      console.error("Failed to book session:", error);
+      showMessage("Error", error instanceof Error ? error.message : "Unable to book the session.");
+    } finally {
+      setBooking(false);
     }
-
-    router.push({
-      pathname: "/(student)/BookingConfirmed",
-      params: {
-        bookingRef,
-        tutorName: tutor.name,
-        tutorAvatar: tutor.avatar,
-        subject: tutor.subjects[selectedSubjectIdx] || tutor.subjects[0],
-        timeSlot: selectedSlotText,
-        dateKey,
-        price: String(numericPrice),
-        focusText,
-      },
-    });
   };
 
   return (
@@ -373,12 +470,12 @@ const isValidUUID = (str?: string): boolean =>
         {/* --- TUTOR PROFILE CARD --- */}
         <View style={styles.tutorCard}>
           <View style={styles.avatarWrapper}>
-            <Image source={{ uri: tutor.avatar }} style={styles.avatar} />
+            <Image source={{ uri: tutorProfile?.avatar_url || DEFAULT_AVATAR }} style={styles.avatar} />
             {tutor.online && <View style={styles.onlineBadge} />}
           </View>
           <View style={styles.tutorInfo}>
             <View style={styles.nameRow}>
-              <Text style={styles.tutorName}>{tutor.name}</Text>
+              <Text style={styles.tutorName}>{tutorProfile?.full_name || "Tutor"}</Text>
               {tutor.verified && <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginLeft: 4 }} />}
             </View>
             <View style={styles.statusRow}>
@@ -411,7 +508,7 @@ const isValidUUID = (str?: string): boolean =>
           <View style={styles.focusContainer}>
             <View style={styles.focusHeader}>
               <Ionicons name="create-outline" size={16} color="#2563EB" style={{ marginRight: 6 }} />
-              <Text style={styles.focusLabel}>What would you like {tutor.name.split(' ')[0]} to focus on?</Text>
+              <Text style={styles.focusLabel}>What would you like {(tutorProfile?.full_name || "Tutor").split(" ")[0]} to focus on?</Text>
             </View>
             <TextInput
               style={styles.focusInput}
@@ -554,7 +651,7 @@ const isValidUUID = (str?: string): boolean =>
               </View>
               <View>
                 <Text style={styles.walletTitle}>Student Wallet Balance</Text>
-                <Text style={styles.balanceText}>$120.00 Available</Text>
+                <Text style={styles.balanceText}>${(userProfile?.wallet_balance ?? 0).toFixed(2)} Available</Text>
               </View>
             </View>
             <View style={styles.autoPayBadge}>
@@ -579,7 +676,7 @@ const isValidUUID = (str?: string): boolean =>
             </View>
             <View style={[styles.feeRow, { marginTop: 12 }]}>
               <Text style={styles.remainingLabel}>Remaining balance after booking:</Text>
-              <Text style={styles.remainingValue}>${Math.max(0, 120 - numericPrice)}.00</Text>
+              <Text style={styles.remainingValue}>${Math.max(0, (userProfile?.wallet_balance ?? 0) - numericPrice).toFixed(2)}</Text>
             </View>
           </View>
         </View>
@@ -591,8 +688,14 @@ const isValidUUID = (str?: string): boolean =>
         </View>
 
         {/* --- CONFIRM BUTTON --- */}
-        <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
-          <Text style={styles.confirmBtnText}>Confirm & Book Session • ${numericPrice}.00</Text>
+        <TouchableOpacity
+          style={styles.confirmBtn}
+          onPress={handleConfirm}
+          disabled={booking || walletLoading || !tutorProfile}
+        >
+          <Text style={styles.confirmBtnText}>
+            {booking ? "Booking..." : `Confirm & Book Session • $${numericPrice.toFixed(2)} →`}
+          </Text>
           <Ionicons name="arrow-forward" size={20} color="#FFFFFF" style={{ marginLeft: 8 }} />
         </TouchableOpacity>
       </ScrollView>

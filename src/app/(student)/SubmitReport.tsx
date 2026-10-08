@@ -1,9 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
+import { supabase } from "../../../lib/supabase";
 import {
     Alert,
     Image,
+    Modal,
     Platform,
     SafeAreaView,
     ScrollView,
@@ -15,27 +17,186 @@ import {
     View,
 } from "react-native";
 
-// --- MOCK DATA ---
-const SESSION_REF = "#TM-84092";
-const TUTOR_NAME = "Dr. Sarah Jenkins";
-const TUTOR_SUBJECT = "AP Calculus & Algebra";
-const SESSION_TIME = "Yesterday, 3:00 PM – 4:00 PM";
-const TUTOR_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
+const DEFAULT_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
+const REPORT_CATEGORIES = ["Session Quality", "Tutor Behavior", "Technical Issues", "Billing Issue", "Other"];
 
 export default function SubmitReportScreen() {
   const router = useRouter();
-  const [urgentFollowUp, setUrgentFollowUp] = useState(true);
-  const [anonymous, setAnonymous] = useState(false);
+  const showMessage = useCallback(
+    (title: string, message: string, onOk?: () => void) => {
+      if (Platform.OS === "web") {
+        window.alert(`${title}\n\n${message}`);
+        onOk?.();
+      } else {
+        Alert.alert(title, message, [{ text: "OK", onPress: onOk }]);
+      }
+    },
+    [],
+  );
+  const params = useLocalSearchParams<{
+    tutorId?: string | string[];
+    tutorName?: string | string[];
+    bookingRef?: string | string[];
+  }>();
+  const tutorId = Array.isArray(params.tutorId) ? params.tutorId[0] : params.tutorId;
+  const tutorNameParam = Array.isArray(params.tutorName)
+    ? params.tutorName[0]
+    : params.tutorName;
+  const bookingRef = Array.isArray(params.bookingRef)
+    ? params.bookingRef[0]
+    : params.bookingRef;
+  const [selectedCategory, setSelectedCategory] = useState("");
   const [rating, setRating] = useState(5);
   const [feedback, setFeedback] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [sessionData, setSessionData] = useState<any>(null);
+  const [categoryModalVisible, setCategoryModalVisible] = useState(false);
+  const [tutor, setTutor] = useState<{
+    full_name: string | null;
+    specialty: string | null;
+    avatar_url: string | null;
+  } | null>(null);
 
-  const handleSubmit = () => {
-    Alert.alert(
-      "Report Submitted",
-      "Thank you. Our support team will respond within 24 business hours.",
-      [{ text: "OK", onPress: () => router.back() }]
-    );
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadReportContext() {
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError) throw userError;
+        if (!user) {
+          if (isMounted) {
+            setSessionData(null);
+            showMessage("Error", "Please sign in to view report details.");
+          }
+          return;
+        }
+
+        const tutorRequest = tutorId
+          ? supabase
+              .from("profiles")
+              .select("full_name, specialty, avatar_url")
+              .eq("id", tutorId)
+              .single()
+          : null;
+        const bookingRequest = bookingRef
+          ? supabase
+              .from("bookings")
+              .select("*")
+              .eq("booking_ref", bookingRef)
+              .eq("student_id", user.id)
+              .single()
+          : (() => {
+              let query = supabase
+                .from("bookings")
+                .select("*")
+                .eq("student_id", user.id);
+              if (tutorId) query = query.eq("tutor_id", tutorId);
+              return query
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            })();
+
+        const [tutorResult, bookingResult] = await Promise.all([
+          tutorRequest,
+          bookingRequest,
+        ]);
+        if (tutorResult?.error) throw tutorResult.error;
+        if (bookingResult.error) throw bookingResult.error;
+
+        if (isMounted) {
+          if (tutorResult?.data) setTutor(tutorResult.data);
+          setSessionData(bookingResult.data);
+        }
+      } catch (error) {
+        console.error("Failed to load report context:", error);
+        showMessage("Error", "Unable to load tutor or session details.");
+      }
+    }
+
+    void loadReportContext();
+    return () => {
+      isMounted = false;
+    };
+  }, [bookingRef, showMessage, tutorId]);
+
+  const handleSubmit = async () => {
+    if (!selectedCategory) {
+      showMessage("Error", "Please select a category");
+      return;
+    }
+    if (feedback.trim().length < 10) {
+      showMessage("Error", "Feedback must be at least 10 characters");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!user) {
+        showMessage("Error", "Please sign in to submit a report.");
+        return;
+      }
+
+      const { error } = await supabase.from("reports").insert({
+        student_id: user.id,
+        tutor_id: tutorId || sessionData?.tutor_id || null,
+        category: selectedCategory,
+        rating,
+        feedback: feedback.trim(),
+      });
+      if (error) {
+        showMessage("Error", error.message);
+        return;
+      }
+
+      const reviewTutorId = tutorId || sessionData?.tutor_id;
+      if (reviewTutorId) {
+        try {
+          const { error: reviewError } = await supabase.from("reviews").insert({
+            tutor_id: reviewTutorId,
+            student_id: user.id,
+            rating,
+            comment: feedback.trim(),
+          });
+          if (reviewError) {
+            console.error("Failed to save review:", reviewError);
+          }
+        } catch (reviewError) {
+          console.error("Failed to save review:", reviewError);
+        }
+      }
+
+      showMessage(
+        "Thank You!",
+        "Thank you for your review and feedback!",
+        () => router.back(),
+      );
+    } catch (error) {
+      console.error("Failed to submit report:", error);
+      showMessage("Error", error instanceof Error ? error.message : "Unable to submit your report.");
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  const sessionDate = sessionData?.session_date
+    ? new Date(`${sessionData.session_date}T00:00:00`).toLocaleDateString()
+    : "—";
+  const sessionTime = [sessionDate, sessionData?.time_slot || "—"].join(", ");
+  const displayedTutorName =
+    sessionData?.tutor_name || tutor?.full_name || tutorNameParam || "Tutor";
+  const displayedBookingRef = sessionData?.booking_ref || bookingRef || "—";
+  const displayedSubject =
+    sessionData?.subject || tutor?.specialty || "General";
 
   return (
     <SafeAreaView style={styles.container}>
@@ -63,11 +224,11 @@ export default function SubmitReportScreen() {
         <View style={styles.card}>
           <View style={styles.sessionHeader}>
             <Text style={styles.sessionRefLabel}>
-              SESSION REF <Text style={styles.sessionRefValue}>{SESSION_REF}</Text>
+              SESSION REF <Text style={styles.sessionRefValue}>{displayedBookingRef}</Text>
             </Text>
             <View style={styles.completedBadge}>
               <View style={styles.greenDot} />
-              <Text style={styles.completedBadgeText}>Completed</Text>
+              <Text style={styles.completedBadgeText}>{sessionData?.status || "Session"}</Text>
             </View>
           </View>
 
@@ -75,19 +236,24 @@ export default function SubmitReportScreen() {
 
           <View style={styles.tutorRow}>
             <View style={styles.avatarWrapper}>
-              <Image source={{ uri: TUTOR_AVATAR }} style={styles.avatar} />
+              <Image
+                source={{ uri: tutor?.avatar_url || DEFAULT_AVATAR }}
+                style={styles.avatar}
+              />
               <View style={styles.onlineDot} />
             </View>
             <View style={styles.tutorInfo}>
-              <Text style={styles.tutorName}>{TUTOR_NAME}</Text>
-              <Text style={styles.tutorSubject}>{TUTOR_SUBJECT}</Text>
+              <Text style={styles.tutorName}>{displayedTutorName}</Text>
+              <Text style={styles.tutorSubject}>{displayedSubject}</Text>
               <View style={styles.timeRow}>
                 <Ionicons name="time-outline" size={14} color="#64748B" />
-                <Text style={styles.timeText}>{SESSION_TIME}</Text>
+                <Text style={styles.timeText}>{sessionTime}</Text>
               </View>
             </View>
             <View style={styles.durationBadge}>
-              <Text style={styles.durationText}>1 hr</Text>
+              <Text style={styles.durationText}>
+                {sessionData?.duration != null ? `${sessionData.duration}m` : "—"}
+              </Text>
             </View>
           </View>
         </View>
@@ -97,8 +263,13 @@ export default function SubmitReportScreen() {
           <Text style={styles.inputLabel}>
             Select Category or Topic <Text style={styles.asterisk}>*</Text>
           </Text>
-          <TouchableOpacity style={styles.dropdownInput}>
-            <Text style={styles.dropdownText}>Choose issue or feedback topic...</Text>
+          <TouchableOpacity
+            style={styles.dropdownInput}
+            onPress={() => setCategoryModalVisible(true)}
+          >
+            <Text style={styles.dropdownText}>
+              {selectedCategory || "Choose issue or feedback topic..."}
+            </Text>
             <Ionicons name="chevron-down" size={20} color="#64748B" />
           </TouchableOpacity>
         </View>
@@ -108,7 +279,7 @@ export default function SubmitReportScreen() {
           <View style={styles.ratingHeader}>
             <Text style={styles.ratingLabel}>Overall Rating</Text>
             <View style={styles.ratingBadge}>
-              <Text style={styles.ratingBadgeText}>5.0 • Excellent</Text>
+              <Text style={styles.ratingBadgeText}>{rating}.0 • {rating === 5 ? "Excellent" : "Rated"}</Text>
             </View>
           </View>
 
@@ -156,42 +327,50 @@ export default function SubmitReportScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* --- CHECKBOX OPTIONS --- */}
-        <View style={styles.checkboxContainer}>
-          <TouchableOpacity
-            style={styles.checkboxRow}
-            onPress={() => setUrgentFollowUp(!urgentFollowUp)}
-          >
-            <View style={[styles.checkbox, urgentFollowUp && styles.checkboxActive]}>
-              {urgentFollowUp && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
-            </View>
-            <Text style={styles.checkboxText}>Request urgent follow-up from TutorMate support team</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.checkboxRow}
-            onPress={() => setAnonymous(!anonymous)}
-          >
-            <View style={[styles.checkbox, anonymous && styles.checkboxActive]}>
-              {anonymous && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
-            </View>
-            <Text style={styles.checkboxText}>
-              Submit anonymously <Text style={styles.anonymousGray}>(hide student identity from tutor)</Text>
-            </Text>
-          </TouchableOpacity>
-        </View>
-
         {/* --- SUBMIT BUTTON --- */}
-        <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
-          <Text style={styles.submitBtnText}>Submit Report & Feedback →</Text>
+        <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit} disabled={submitting}>
+          <Text style={styles.submitBtnText}>
+            {submitting ? "Submitting..." : "Submit Report & Feedback →"}
+          </Text>
         </TouchableOpacity>
 
         {/* --- FOOTER TEXT --- */}
         <View style={styles.footerRow}>
-          <Ionicons name="shield-checkmark-outline" size={16} color="#10B981" />
-          <Text style={styles.footerText}>TutorMate Support • Response within 24 business hours</Text>
+          <Ionicons name="heart-outline" size={16} color="#10B981" />
+          <Text style={styles.footerText}>Your feedback helps improve TutorMate for everyone</Text>
         </View>
       </ScrollView>
+
+      <Modal
+        visible={categoryModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCategoryModalVisible(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            paddingHorizontal: 20,
+            backgroundColor: "rgba(15, 23, 42, 0.5)",
+          }}
+        >
+          <View style={styles.card}>
+            {REPORT_CATEGORIES.map((category) => (
+              <TouchableOpacity
+                key={category}
+                style={styles.dropdownInput}
+                onPress={() => {
+                  setSelectedCategory(category);
+                  setCategoryModalVisible(false);
+                }}
+              >
+                <Text style={styles.dropdownText}>{category}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </Modal>
 
       {/* --- BOTTOM TAB BAR --- */}
       <View style={styles.tabBar}>

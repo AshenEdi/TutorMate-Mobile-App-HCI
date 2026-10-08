@@ -1,5 +1,4 @@
-import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -15,9 +14,12 @@ import {
     View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
-// In your app project:
-// import { supabase } from '@/lib/supabase';
-// import { useRouter } from 'expo-router';
+import {
+  formatBookingDate,
+  getProfilesById,
+  getTutorBookings,
+  localDateString,
+} from '../../lib/tutorData';
 
 // Types
 type TabType = 'upcoming' | 'past';
@@ -26,111 +28,77 @@ type BottomTabType = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profil
 interface SessionItem {
   id: string;
   studentName: string;
-  avatarUrl: string;
+  avatarUrl?: string;
   isVerified?: boolean;
   subject: string;
+  startsInText: string;
   dateBadgeText: string;
   dateBadgeIcon?: 'calendar-outline';
-  statusBadge: 'Confirmed' | 'Rescheduled';
-  timeSlot: string;
-}
-
-interface FeaturedSession {
-  id: string;
-  studentName: string;
-  avatarUrl: string;
-  isVerified: boolean;
-  subject: string;
-  startsInText: string;
+  statusBadge: 'Confirmed';
   timeSlot: string;
   deliveryType: string;
-  zoomMeetingUrl: string;
 }
-
-const INITIAL_FEATURED_SESSION: FeaturedSession = {
-  id: 'feat_1',
-  studentName: 'Sarah Lin',
-  avatarUrl:
-    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
-  isVerified: true,
-  subject: 'Multivariable Calculus',
-  startsInText: 'Starts in 45m',
-  timeSlot: 'Today, 4:00 PM – 5:00 PM (60 min)',
-  deliveryType: 'Online Room',
-  zoomMeetingUrl: 'https://zoom.us/j/9876543210',
-};
-
-const INITIAL_UPCOMING_SESSIONS: SessionItem[] = [
-  {
-    id: '2',
-    studentName: 'David Kim',
-    avatarUrl:
-      'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=200&auto=format&fit=crop&q=80',
-    subject: 'AP Physics C: Mechanics',
-    dateBadgeText: 'Tomorrow',
-    statusBadge: 'Confirmed',
-    timeSlot: '2:30 PM – 3:30 PM',
-  },
-  {
-    id: '3',
-    studentName: 'Chloe Bennett',
-    avatarUrl:
-      'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&auto=format&fit=crop&q=80',
-    subject: 'College Admissions Essay Prep',
-    dateBadgeText: 'Friday, Mar 20',
-    statusBadge: 'Confirmed',
-    timeSlot: '11:00 AM – 12:00 PM',
-  },
-  {
-    id: '4',
-    studentName: 'Marcus Thorne',
-    avatarUrl:
-      'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&auto=format&fit=crop&q=80',
-    subject: 'Linear Algebra Fundamentals',
-    dateBadgeText: 'Monday, Mar 23',
-    statusBadge: 'Rescheduled',
-    timeSlot: '5:00 PM – 6:00 PM',
-  },
-];
-
-const SESSIONS_STORAGE_KEY = '@tutor_upcoming_sessions_cache';
 
 export default function TutorUpcomingSessionsScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('upcoming');
   const [activeBottomNav, setActiveBottomNav] = useState<BottomTabType>('sessions');
-  const [featuredSession] = useState<FeaturedSession>(INITIAL_FEATURED_SESSION);
-  const [upcomingList, setUpcomingList] = useState<SessionItem[]>(INITIAL_UPCOMING_SESSIONS);
+  const [upcomingList, setUpcomingList] = useState<SessionItem[]>([]);
+  const [pastCount, setPastCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Load / cache sessions
   useEffect(() => {
-    (async () => {
+    let mounted = true;
+    const loadSessions = async () => {
       try {
-        const cached = await AsyncStorage.getItem(SESSIONS_STORAGE_KEY);
-        if (cached) {
-          setUpcomingList(JSON.parse(cached));
-        } else {
-          await AsyncStorage.setItem(
-            SESSIONS_STORAGE_KEY,
-            JSON.stringify(INITIAL_UPCOMING_SESSIONS)
-          );
-        }
-      } catch (err) {
-        console.warn('Failed to load session cache:', err);
+        const bookings = await getTutorBookings();
+        const profiles = await getProfilesById(bookings.map((booking) => booking.student_id));
+        const today = localDateString();
+        const upcoming = bookings.filter((booking) =>
+          booking.session_date >= today &&
+          (booking.status === 'confirmed' || booking.status === 'accepted')
+        );
+        if (!mounted) return;
+        setUpcomingList(upcoming.map((booking) => {
+          const student = booking.student_id ? profiles.get(booking.student_id) : undefined;
+          return {
+            id: booking.id,
+            studentName: student?.full_name || booking.student_name || 'Student',
+            avatarUrl: student?.avatar_url || undefined,
+            isVerified: false,
+            subject: booking.subject,
+            startsInText: formatBookingDate(booking.session_date),
+            dateBadgeText: formatBookingDate(booking.session_date),
+            statusBadge: 'Confirmed' as const,
+            timeSlot: `${booking.time_slot}${booking.duration ? ` (${booking.duration})` : ''}`,
+            deliveryType: booking.delivery_format || 'Session',
+          };
+        }));
+        setPastCount(bookings.filter((booking) =>
+          booking.session_date < today &&
+          (booking.status === 'completed' || booking.status === 'cancelled')
+        ).length);
+        setErrorMessage(null);
+      } catch (error) {
+        console.error('Failed to load tutor sessions:', error);
+        if (mounted) setErrorMessage(error instanceof Error ? error.message : 'Unable to load sessions.');
+      } finally {
+        if (mounted) setLoading(false);
       }
-    })();
+    };
+    void loadSessions();
+    return () => { mounted = false; };
   }, []);
 
-  const handleStartZoomCall = () => {
-    Alert.alert('Launching Zoom', `Connecting to session with ${featuredSession.studentName}...`);
-  };
-
-  const handleSessionPress = (studentName: string) => {
-    Alert.alert('Session Details', `Viewing details for ${studentName}`);
+  const featuredSession = upcomingList[0] ?? null;
+  const regularSessions = upcomingList.slice(1);
+  const handleSessionPress = (bookingId: string) => {
+    router.push(`/(tutor)/TutorBookingRequestDetails?id=${encodeURIComponent(bookingId)}`);
   };
 
   const handleOpenCalendar = () => {
-    Alert.alert('Calendar', 'Opening month/week schedule calendar view');
+    router.push('/(tutor)/TutorCalendar');
   };
 
   const handleOpenFilter = () => {
@@ -224,7 +192,7 @@ export default function TutorUpcomingSessionsScreen() {
                   activeTab === 'upcoming' && styles.tabCountTextActive,
                 ]}
               >
-                4
+                {upcomingList.length}
               </Text>
             </View>
           </TouchableOpacity>
@@ -249,14 +217,14 @@ export default function TutorUpcomingSessionsScreen() {
                   activeTab === 'past' && styles.tabCountTextActive,
                 ]}
               >
-                18
+                {pastCount}
               </Text>
             </View>
           </TouchableOpacity>
         </View>
 
         {/* --- Highlighted Active Next Session Card --- */}
-        <View style={styles.featuredCard}>
+        {featuredSession && <View style={styles.featuredCard}>
           <View style={styles.blueLeftIndicator} />
 
           <View style={styles.featuredInner}>
@@ -276,7 +244,13 @@ export default function TutorUpcomingSessionsScreen() {
             {/* Student Info Row */}
             <View style={styles.featuredStudentRow}>
               <View style={styles.avatarWrap}>
-                <Image source={{ uri: featuredSession.avatarUrl }} style={styles.featuredAvatar} />
+                {featuredSession.avatarUrl ? (
+                  <Image source={{ uri: featuredSession.avatarUrl }} style={styles.featuredAvatar} />
+                ) : (
+                  <View style={[styles.featuredAvatar, styles.avatarFallback]}>
+                    <Ionicons name="person" size={20} color="#64748B" />
+                  </View>
+                )}
                 {featuredSession.isVerified && (
                   <View style={styles.verifiedCheckWrap}>
                     <Ionicons name="checkmark" size={11} color="#0F766E" />
@@ -299,32 +273,37 @@ export default function TutorUpcomingSessionsScreen() {
               <TouchableOpacity
                 activeOpacity={0.85}
                 style={styles.zoomPrimaryBtn}
-                onPress={handleStartZoomCall}
+                onPress={() => handleSessionPress(featuredSession.id)}
               >
                 <MaterialCommunityIcons name="video-plus-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.zoomBtnText}>Start Zoom Call</Text>
+                <Text style={styles.zoomBtnText}>Session Details</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 activeOpacity={0.7}
                 style={styles.zoomArrowBtn}
-                onPress={() => handleSessionPress(featuredSession.studentName)}
+                onPress={() => handleSessionPress(featuredSession.id)}
               >
                 <Ionicons name="chevron-forward" size={19} color="#334155" />
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </View>}
 
         {/* --- Regular Upcoming Sessions List --- */}
-        {upcomingList.map((item) => {
-          const isRescheduled = item.statusBadge === 'Rescheduled';
+        {loading ? (
+          <Text style={styles.emptyText}>Loading sessions…</Text>
+        ) : errorMessage ? (
+          <Text style={styles.emptyText}>{errorMessage}</Text>
+        ) : upcomingList.length === 0 ? (
+          <Text style={styles.emptyText}>No upcoming sessions</Text>
+        ) : regularSessions.map((item) => {
           return (
             <TouchableOpacity
               key={item.id}
               activeOpacity={0.85}
               style={styles.sessionCard}
-              onPress={() => handleSessionPress(item.studentName)}
+              onPress={() => handleSessionPress(item.id)}
             >
               <View style={styles.sessionCardTop}>
                 {/* Date / Day badge */}
@@ -337,13 +316,13 @@ export default function TutorUpcomingSessionsScreen() {
                 <View
                   style={[
                     styles.statusTag,
-                    isRescheduled ? styles.rescheduledTag : styles.confirmedTag,
+                    styles.confirmedTag,
                   ]}
                 >
                   <Text
                     style={[
                       styles.statusTagText,
-                      isRescheduled ? styles.rescheduledText : styles.confirmedText,
+                      styles.confirmedText,
                     ]}
                   >
                     {item.statusBadge}
@@ -353,7 +332,13 @@ export default function TutorUpcomingSessionsScreen() {
 
               {/* Student info + Right arrow */}
               <View style={styles.sessionBody}>
-                <Image source={{ uri: item.avatarUrl }} style={styles.sessionAvatar} />
+                {item.avatarUrl ? (
+                  <Image source={{ uri: item.avatarUrl }} style={styles.sessionAvatar} />
+                ) : (
+                  <View style={[styles.sessionAvatar, styles.avatarFallback]}>
+                    <Ionicons name="person" size={18} color="#64748B" />
+                  </View>
+                )}
 
                 <View style={styles.sessionDetails}>
                   <Text style={styles.sessionStudentName}>{item.studentName}</Text>
@@ -370,27 +355,6 @@ export default function TutorUpcomingSessionsScreen() {
           );
         })}
 
-        {/* --- Weekly Goal Progress Banner --- */}
-        <View style={styles.goalBanner}>
-          <View style={styles.goalLeft}>
-            <View style={styles.goalIconWrap}>
-              <Feather name="trending-up" size={20} color="#2563EB" />
-            </View>
-            <View>
-              <Text style={styles.goalTitle}>Weekly Goal</Text>
-              <Text style={styles.goalSubtitle}>12 of 15 booked hours completed</Text>
-            </View>
-          </View>
-
-          {/* Segmented Circular Ring Mock for 80% */}
-          <View style={styles.goalProgressWrap}>
-            <View style={styles.circularTrackContainer}>
-              <View style={styles.circularSegmentTop} />
-              <View style={styles.circularSegmentBottom} />
-              <Text style={styles.goalPercentText}>80%</Text>
-            </View>
-          </View>
-        </View>
       </ScrollView>
 
       {/* --- Fixed Bottom Tab Bar --- */}
@@ -445,9 +409,6 @@ export default function TutorUpcomingSessionsScreen() {
               size={23}
               color={activeBottomNav === 'requests' ? '#2563EB' : '#64748B'}
             />
-            <View style={styles.redBadge}>
-              <Text style={styles.redBadgeText}>2</Text>
-            </View>
           </View>
           <Text
             style={[
@@ -713,6 +674,15 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: 26,
     backgroundColor: '#E2E8F0',
+  },
+  avatarFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyText: {
+    paddingVertical: 24,
+    color: '#64748B',
+    textAlign: 'center',
   },
   verifiedCheckWrap: {
     position: 'absolute',

@@ -80,9 +80,6 @@ export function TutorBottomNav({ activeTab }: TutorBottomNavProps) {
             size={23}
             color={activeTab === "requests" ? "#2563EB" : "#64748B"}
           />
-          <View style={styles.redBadge}>
-            <Text style={styles.redBadgeText}>2</Text>
-          </View>
         </View>
         <Text
           style={[
@@ -153,22 +150,6 @@ const styles = StyleSheet.create({
   },
   badgeWrap: {
     position: "relative",
-  },
-  redBadge: {
-    position: "absolute",
-    top: -4,
-    right: -7,
-    backgroundColor: "#DC2626",
-    borderRadius: 8,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderWidth: 1.5,
-    borderColor: "#FFFFFF",
-  },
-  redBadgeText: {
-    color: "#FFFFFF",
-    fontSize: 10,
-    fontWeight: "700",
   },
   navLabel: {
     fontSize: 11,

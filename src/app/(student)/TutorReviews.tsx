@@ -1,6 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { supabase } from "../../../lib/supabase";
 import {
+    ActivityIndicator,
     Image,
     Platform,
     SafeAreaView,
@@ -12,73 +15,100 @@ import {
     View,
 } from "react-native";
 
-// --- MOCK DATA ---
-const TUTOR = {
-  name: "Dr. Sarah Jenkins",
-  title: "AP Calculus & Multivariable Specialist",
-  degree: "Ph.D. Applied Math • MIT Alum",
-  avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-  rating: 4.9,
-  reviewsCount: 128,
-  rate: "$45",
-  nextSlot: "Next slot today 4 PM",
-};
-
-const RATING_DISTRIBUTION = [
-  { stars: 5, percentage: 88 },
-  { stars: 4, percentage: 9 },
-  { stars: 3, percentage: 2 },
-  { stars: 2, percentage: 1 },
-  { stars: 1, percentage: 0 },
-];
-
 const STATS = [
   { icon: "thumbs-up-outline", value: "98%", label: "Recommend" },
   { icon: "time-outline", value: "99%", label: "On-time" },
   { icon: "flash-outline", value: "<15m", label: "Reply" },
 ];
 
-const REVIEWS = [
-  {
-    id: "1",
-    user: "Maya A.",
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=150&auto=format&fit=crop",
-    verified: true,
-    stars: 5,
-    subject: "AP Calculus BC",
-    time: "2 days ago",
-    text: "Dr. Sarah explained Taylor Series and differential equations better in one hour than my lecture did all month! Got an A on my midterm after being completely lost. Her visual diagrams are pure magic.",
-    tags: ["Taylor Series", "ODEs"],
-    likes: 24,
-  },
-  {
-    id: "2",
-    user: "Liam T.",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150&auto=format&fit=crop",
-    verified: true,
-    stars: 5,
-    subject: "College Freshman",
-    time: "1 week ago",
-    text: "Super structured notes and sent high-yield practice problems right after our call. Highly recommended for university-level calculus! She doesn't just give answers, she builds true intuition.",
-    tags: ["PDF Notes Shared"],
-    likes: 18,
-  },
-  {
-    id: "3",
-    user: "Sophia R.",
-    avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?q=80&w=150&auto=format&fit=crop",
-    verified: true,
-    stars: 5,
-    subject: "High School Junior",
-    time: "2 weeks ago",
-    text: "Very patient and encouraging. Solved tough integration by parts techniques step by step. I used to panic during timed tests, but she showed me a calming breakdown routine.",
-    tags: ["Anxiety Relief"],
-    likes: 11,
-  },
-];
+const DEFAULT_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
 
 export default function TutorReviewsScreen() {
   const router = useRouter();
+  const { tutorId: routeTutorId } = useLocalSearchParams<{ tutorId?: string | string[] }>();
+  const [tutor, setTutor] = useState<any>(null);
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const tutorId = Array.isArray(routeTutorId) ? routeTutorId[0] : routeTutorId;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTutorAndReviews() {
+      try {
+        let activeTutorId = tutorId;
+        if (!activeTutorId) {
+          const { data: firstTutor, error: firstTutorError } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("role", "tutor")
+            .limit(1)
+            .single();
+          if (firstTutorError) throw firstTutorError;
+          activeTutorId = firstTutor.id;
+        }
+
+        const { data: tutorData, error: tutorError } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", activeTutorId)
+          .single();
+        if (tutorError) throw tutorError;
+
+        const { data: reviewData, error: reviewsError } = await supabase
+          .from("reviews")
+          .select("id, rating, comment, created_at, student_id")
+          .eq("tutor_id", activeTutorId)
+          .order("created_at", { ascending: false });
+        if (reviewsError) throw reviewsError;
+
+        const studentIds = [...new Set((reviewData || [])
+          .map((review) => review.student_id)
+          .filter(Boolean))];
+        const { data: studentProfiles, error: studentProfilesError } = studentIds.length
+          ? await supabase
+              .from("profiles")
+              .select("id, full_name, avatar_url")
+              .in("id", studentIds)
+          : { data: [], error: null };
+        if (studentProfilesError) throw studentProfilesError;
+
+        const studentProfilesById = Object.fromEntries(
+          (studentProfiles || []).map((profile) => [profile.id, profile]),
+        );
+        const reviewsWithStudents = (reviewData || []).map((review) => ({
+          ...review,
+          student: studentProfilesById[review.student_id] || null,
+        }));
+
+        if (isMounted) {
+          setTutor(tutorData);
+          setReviews(reviewsWithStudents);
+        }
+      } catch (error) {
+        console.error("Failed to load tutor reviews:", error);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    void loadTutorAndReviews();
+    return () => {
+      isMounted = false;
+    };
+  }, [tutorId]);
+
+  const averageRating = reviews.length
+    ? reviews.reduce((total, review) => total + Number(review.rating || 0), 0) / reviews.length
+    : 0;
+  const ratingDistribution = [5, 4, 3, 2, 1].map((stars) => {
+    const count = reviews.filter((review) => Number(review.rating) === stars).length;
+    return {
+      stars,
+      percentage: reviews.length ? Math.round((count / reviews.length) * 100) : 0,
+    };
+  });
+  const tutorRate = Number(tutor?.hourly_rate) || 45;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -106,22 +136,22 @@ export default function TutorReviewsScreen() {
         <View style={styles.card}>
           <View style={styles.tutorHeader}>
             <View style={styles.avatarWrapper}>
-              <Image source={{ uri: TUTOR.avatar }} style={styles.avatar} />
+              <Image source={{ uri: tutor?.avatar_url || DEFAULT_AVATAR }} style={styles.avatar} />
               <View style={styles.verifiedBadge}>
                 <Ionicons name="checkmark" size={10} color="#FFFFFF" />
               </View>
             </View>
             <View style={styles.tutorMainInfo}>
               <View style={styles.nameRow}>
-                <Text style={styles.tutorName}>{TUTOR.name}</Text>
+                <Text style={styles.tutorName}>{tutor?.full_name || "Tutor"}</Text>
                 <View style={styles.topRatedBadge}>
                   <Text style={styles.topRatedText}>Top Rated</Text>
                 </View>
               </View>
-              <Text style={styles.tutorTitle}>{TUTOR.title}</Text>
+              <Text style={styles.tutorTitle}>{tutor?.specialty || "Tutor"}</Text>
               <View style={styles.degreeRow}>
                 <Ionicons name="checkmark-circle" size={14} color="#10B981" />
-                <Text style={styles.degreeText}>{TUTOR.degree}</Text>
+                <Text style={styles.degreeText}>{tutor?.education || "Verified Tutor"}</Text>
               </View>
             </View>
           </View>
@@ -131,17 +161,17 @@ export default function TutorReviewsScreen() {
         <View style={styles.card}>
           <View style={styles.ratingRow}>
             <View style={styles.ratingLeft}>
-              <Text style={styles.bigRating}>{TUTOR.rating}</Text>
+              <Text style={styles.bigRating}>{averageRating.toFixed(1)}</Text>
               <View style={styles.starsRow}>
                 {[1, 2, 3, 4, 5].map((s) => (
                   <Ionicons key={s} name="star" size={16} color="#D97706" />
                 ))}
               </View>
-              <Text style={styles.reviewsCountText}>{TUTOR.reviewsCount} Reviews</Text>
+              <Text style={styles.reviewsCountText}>{reviews.length} Reviews</Text>
             </View>
 
             <View style={styles.ratingRight}>
-              {RATING_DISTRIBUTION.map((item) => (
+              {ratingDistribution.map((item) => (
                 <View key={item.stars} style={styles.distRow}>
                   <Text style={styles.distLabel}>{item.stars}</Text>
                   <View style={styles.progressBarBg}>
@@ -174,12 +204,12 @@ export default function TutorReviewsScreen() {
         {/* --- STUDENT FEEDBACK HEADER --- */}
         <View style={styles.feedbackHeader}>
           <Text style={styles.feedbackTitle}>Student Feedback</Text>
-          <Text style={styles.totalReviewsText}>{TUTOR.reviewsCount} Total</Text>
+          <Text style={styles.totalReviewsText}>{reviews.length} Total</Text>
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterPills}>
           <TouchableOpacity style={[styles.filterPill, styles.filterPillActive]}>
-            <Text style={[styles.filterPillText, styles.filterPillTextActive]}>All (128)</Text>
+            <Text style={[styles.filterPillText, styles.filterPillTextActive]}>All ({reviews.length})</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.filterPill}>
             <Text style={styles.filterPillText}>5 Star</Text>
@@ -190,14 +220,25 @@ export default function TutorReviewsScreen() {
         </ScrollView>
 
         {/* --- REVIEW CARDS --- */}
-        {REVIEWS.map((review) => (
+        {loading && <ActivityIndicator size="large" color="#2563EB" />}
+        {!loading && reviews.length === 0 && (
+          <View style={styles.card}>
+            <Text style={styles.reviewText}>No reviews yet</Text>
+          </View>
+        )}
+        {reviews.map((review) => (
           <View key={review.id} style={styles.card}>
             <View style={styles.reviewHeader}>
               <View style={styles.reviewUserRow}>
-                <Image source={{ uri: review.avatar }} style={styles.reviewAvatar} />
+                <Image
+                  source={{ uri: review.student?.avatar_url || DEFAULT_AVATAR }}
+                  style={styles.reviewAvatar}
+                />
                 <View style={styles.reviewUserInfo}>
                   <View style={styles.reviewNameRow}>
-                    <Text style={styles.reviewName}>{review.user}</Text>
+                    <Text style={styles.reviewName}>
+                      {review.student?.full_name || "Anonymous Student"}
+                    </Text>
                     {review.verified && (
                       <View style={styles.reviewVerifiedBadge}>
                         <Ionicons name="checkmark" size={8} color="#10B981" style={{ marginRight: 2 }} />
@@ -205,30 +246,25 @@ export default function TutorReviewsScreen() {
                       </View>
                     )}
                   </View>
-                  <Text style={styles.reviewSubText}>{review.subject} • {review.time}</Text>
+                  <Text style={styles.reviewSubText}>
+                    {review.subject || "Tutoring session"} • {review.created_at ? new Date(review.created_at).toLocaleDateString() : ""}
+                  </Text>
                 </View>
               </View>
               <View style={styles.starsRow}>
                 {[1, 2, 3, 4, 5].map((s) => (
-                  <Ionicons key={s} name="star" size={14} color="#D97706" />
+                  <Ionicons key={s} name={s <= Number(review.rating) ? "star" : "star-outline"} size={14} color="#D97706" />
                 ))}
               </View>
             </View>
 
-            <Text style={styles.reviewText}>{review.text}</Text>
+            <Text style={styles.reviewText}>{review.comment || ""}</Text>
 
             <View style={styles.reviewFooter}>
-              <View style={styles.tagContainer}>
-                {review.tags.map((tag, idx) => (
-                  <View key={idx} style={styles.tagChip}>
-                    <Ionicons name="bookmark-outline" size={10} color="#2563EB" style={{ marginRight: 4 }} />
-                    <Text style={styles.tagText}>{tag}</Text>
-                  </View>
-                ))}
-              </View>
+              <View style={styles.tagContainer} />
               <View style={styles.likeContainer}>
                 <Ionicons name="thumbs-up-outline" size={14} color="#64748B" style={{ marginRight: 4 }} />
-                <Text style={styles.likeText}>{review.likes}</Text>
+                <Text style={styles.likeText}>{Number(review.likes) || 0}</Text>
               </View>
             </View>
           </View>
@@ -240,7 +276,7 @@ export default function TutorReviewsScreen() {
           <View style={styles.verifiedInfoTextContainer}>
             <Text style={styles.verifiedInfoTitle}>100% Verified Reviews</Text>
             <Text style={styles.verifiedInfoDesc}>
-              Only students who complete verified live lessons with Dr. Sarah can submit a review.
+              Only students who complete verified live lessons can submit a review.
             </Text>
           </View>
         </View>
@@ -249,18 +285,18 @@ export default function TutorReviewsScreen() {
       {/* --- FIXED BOTTOM BOOKING BAR --- */}
       <View style={styles.bookingBar}>
         <View style={styles.bookingLeft}>
-          <Image source={{ uri: TUTOR.avatar }} style={styles.smallAvatar} />
+          <Image source={{ uri: tutor?.avatar_url || DEFAULT_AVATAR }} style={styles.smallAvatar} />
           <View style={styles.bookingPriceInfo}>
-            <Text style={styles.bookingPrice}>{TUTOR.rate}<Text style={styles.bookingUnit}>/hr</Text></Text>
+            <Text style={styles.bookingPrice}>${tutorRate}<Text style={styles.bookingUnit}>/hr</Text></Text>
             <View style={styles.bookingSlotRow}>
               <View style={styles.onlineDot} />
-              <Text style={styles.bookingSlotText}>{TUTOR.nextSlot}</Text>
+              <Text style={styles.bookingSlotText}>Available for booking</Text>
             </View>
           </View>
         </View>
         <TouchableOpacity 
           style={styles.bookSessionBtn}
-          onPress={() => router.push("/(student)/SessionBooking")}
+          onPress={() => router.push(`/(student)/SessionBooking?tutorId=${tutor?.id || tutorId || ""}`)}
         >
           <Text style={styles.bookSessionText}>Book Session</Text>
           <Ionicons name="calendar-outline" size={18} color="#FFFFFF" style={{ marginLeft: 6 }} />

@@ -37,21 +37,35 @@ CREATE INDEX IF NOT EXISTS idx_bookings_tutor_date
 CREATE INDEX IF NOT EXISTS idx_bookings_status 
     ON public.bookings (status);
 
--- 3. Grant required privileges to postgres roles
-GRANT ALL ON TABLE public.bookings TO anon, authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+-- 3. Grant only the operations used by authenticated clients.
+REVOKE ALL ON TABLE public.bookings FROM anon, authenticated;
+GRANT SELECT, INSERT ON TABLE public.bookings TO authenticated;
+GRANT UPDATE (status, updated_at) ON TABLE public.bookings TO authenticated;
 
 -- 4. Enable Row Level Security (RLS)
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 
--- 5. RLS Policies (Allow access for authenticated & anon clients)
+-- 5. RLS Policies (limit booking access to its student and tutor)
 DROP POLICY IF EXISTS "Enable all access for bookings" ON public.bookings;
+DROP POLICY IF EXISTS "Booking participants can view bookings" ON public.bookings;
+DROP POLICY IF EXISTS "Students can create bookings" ON public.bookings;
+DROP POLICY IF EXISTS "Tutors can update booking status" ON public.bookings;
 
-CREATE POLICY "Enable all access for bookings"
+CREATE POLICY "Booking participants can view bookings"
     ON public.bookings
-    FOR ALL
-    USING (true)
-    WITH CHECK (true);
+    FOR SELECT TO authenticated
+    USING (auth.uid() = student_id OR auth.uid() = tutor_id);
+
+CREATE POLICY "Students can create bookings"
+    ON public.bookings
+    FOR INSERT TO authenticated
+    WITH CHECK (auth.uid() = student_id);
+
+CREATE POLICY "Tutors can update booking status"
+    ON public.bookings
+    FOR UPDATE TO authenticated
+    USING (auth.uid() = tutor_id)
+    WITH CHECK (auth.uid() = tutor_id);
 
 -- 6. Auto-update updated_at timestamp trigger
 CREATE OR REPLACE FUNCTION update_bookings_updated_at()

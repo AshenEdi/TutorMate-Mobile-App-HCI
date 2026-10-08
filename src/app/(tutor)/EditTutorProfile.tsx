@@ -1,5 +1,4 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -17,6 +16,7 @@ import {
 } from 'react-native';
 import { supabase } from '../../../lib/supabase';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
+import { useAuth } from '../../context/AuthContext';
 
 interface EditProfileFormData {
   fullName: string;
@@ -32,88 +32,108 @@ interface EditProfileFormData {
   avatarUrl: string;
 }
 
-const STORAGE_KEY = '@tutormate_tutor_edit_profile';
-
 export default function EditProfileScreen() {
   const router = useRouter();
-  // Form State initialized matching the screenshot
+  const { user, loading: authLoading } = useAuth();
   const [formData, setFormData] = useState<EditProfileFormData>({
-    fullName: 'Dr. Evelyn Vance, Ph.D.',
-    email: 'evelyn.vance@stanford.edu',
-    isEmailVerified: true,
-    phoneNumber: '+1 (555) 438–9210',
-    degreeCredentials: 'Ph.D. in Applied Mathematics, Stanford',
-    location: 'Palo Alto, California (PST)',
-    onlineVideo: true,
-    inPerson: true,
-    bio: 'Passionate calculus & physics tutor with 6+ years of experience helping college and high school students excel in STEM. I emphasize intuitive visual problem-solving and gentle patience.',
-    hourlyRate: '75',
-    avatarUrl:
-      'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80',
+    fullName: '',
+    email: '',
+    isEmailVerified: false,
+    phoneNumber: '',
+    degreeCredentials: '',
+    location: '',
+    onlineVideo: false,
+    inPerson: false,
+    bio: '',
+    hourlyRate: '',
+    avatarUrl: '',
   });
 
   const [saving, setSaving] = useState(false);
+  const profileFields = [
+    formData.fullName,
+    formData.phoneNumber,
+    formData.degreeCredentials,
+    formData.location,
+    formData.bio,
+    formData.hourlyRate,
+    formData.avatarUrl,
+  ];
+  const profileStrength = Math.round(
+    (profileFields.filter((value) => Boolean(value.trim())).length / profileFields.length) * 100
+  );
 
-  // Load saved draft/profile from AsyncStorage on initial render
   useEffect(() => {
-    (async () => {
+    if (authLoading) return;
+    let active = true;
+    const loadProfile = async () => {
       try {
-        const stored = await AsyncStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          setFormData(JSON.parse(stored));
-        }
+        if (!user) throw new Error('You must be signed in to edit your tutor profile.');
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+        if (error) throw error;
+        if (data.role !== 'tutor') throw new Error('This profile is not registered as a tutor.');
+        if (!active) return;
+        setFormData({
+          fullName: data.full_name ?? '',
+          email: user.email ?? data.email ?? '',
+          isEmailVerified: Boolean(user.email_confirmed_at),
+          phoneNumber: data.phone_number ?? '',
+          degreeCredentials: data.education ?? '',
+          location: data.location ?? '',
+          onlineVideo: data.online_video ?? true,
+          inPerson: data.in_person ?? false,
+          bio: data.bio ?? '',
+          hourlyRate: data.hourly_rate == null ? '' : String(data.hourly_rate),
+          avatarUrl: data.avatar_url ?? '',
+        });
       } catch (err) {
-        console.warn('Failed to load profile draft from AsyncStorage:', err);
+        console.error('Failed to load tutor profile:', err);
+        Alert.alert('Profile error', err instanceof Error ? err.message : 'Unable to load your profile.');
       }
-    })();
-  }, []);
+    };
+    void loadProfile();
+    return () => { active = false; };
+  }, [authLoading, user]);
 
   const handleSaveChanges = async () => {
     try {
       setSaving(true);
-      // Persist to local storage
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
-      await AsyncStorage.setItem('@tutormate_tutor_profile', JSON.stringify({
-        fullName: formData.fullName,
-        email: formData.email,
-        degree: formData.degreeCredentials,
-        locationTimezone: formData.location,
-        avatarUrl: formData.avatarUrl,
-        phoneNumber: formData.phoneNumber,
-        countryCode: '+1',
-      }));
-
-      // Supabase integration
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        await supabase.from('profiles').upsert({
+      if (!user) throw new Error('You must be signed in to save your tutor profile.');
+      if (!formData.fullName.trim()) throw new Error('Please enter your full name.');
+      if (formData.hourlyRate && (!Number.isFinite(Number(formData.hourlyRate)) || Number(formData.hourlyRate) < 0)) {
+        throw new Error('Please enter a valid hourly rate.');
+      }
+      const { error } = await supabase.from('profiles').upsert({
           id: user.id,
           full_name: formData.fullName,
-          email: formData.email,
+          email: user.email ?? formData.email,
           phone_number: formData.phoneNumber,
           education: formData.degreeCredentials,
-          degree: formData.degreeCredentials,
           location: formData.location,
           bio: formData.bio,
-          hourly_rate: Number(formData.hourlyRate) || 75,
+          hourly_rate: formData.hourlyRate ? Number(formData.hourlyRate) : null,
           avatar_url: formData.avatarUrl,
+          online_video: formData.onlineVideo,
+          in_person: formData.inPerson,
           role: 'tutor',
           updated_at: new Date().toISOString(),
         }, { onConflict: 'id' });
-      }
+      if (error) throw error;
 
       router.replace('/(tutor)/TutorProfile');
     } catch (error) {
       console.error('Error saving profile:', error);
-      Alert.alert('Error', 'Unable to save profile changes. Please try again.');
+      Alert.alert('Error', error instanceof Error ? error.message : 'Unable to save profile changes.');
     } finally {
       setSaving(false);
     }
   };
 
-  const handlePreviewProfile = () => {
-    Alert.alert('Preview', 'Navigating to public tutor profile preview...');
-  };
+  const handlePreviewProfile = () => router.push('/(tutor)/TutorProfile');
 
   const handleChangePhoto = () => {
     Alert.alert('Change Photo', 'Select image from Gallery or take a Camera snapshot.');
@@ -173,7 +193,13 @@ export default function EditProfileScreen() {
         {/* --- Photo Section --- */}
         <View style={styles.avatarSection}>
           <View style={styles.avatarWrapper}>
-            <Image source={{ uri: formData.avatarUrl }} style={styles.avatarImage} />
+            {formData.avatarUrl ? (
+              <Image source={{ uri: formData.avatarUrl }} style={styles.avatarImage} />
+            ) : (
+              <View style={[styles.avatarImage, styles.avatarFallback]}>
+                <Ionicons name="person" size={32} color="#64748B" />
+              </View>
+            )}
             <TouchableOpacity
               activeOpacity={0.85}
               style={styles.cameraIconBtn}
@@ -199,15 +225,15 @@ export default function EditProfileScreen() {
           <View style={styles.strengthTopRow}>
             <View style={styles.strengthTitleGroup}>
               <Ionicons name="shield-checkmark" size={18} color="#2563EB" />
-              <Text style={styles.strengthTitle}>Profile Strength: 92%</Text>
+              <Text style={styles.strengthTitle}>Profile Strength: {profileStrength}%</Text>
             </View>
             <View style={styles.readyBadge}>
-              <Text style={styles.readyBadgeText}>Almost Ready</Text>
+              <Text style={styles.readyBadgeText}>{profileStrength === 100 ? 'Complete' : 'In progress'}</Text>
             </View>
           </View>
 
           <View style={styles.progressBarTrack}>
-            <View style={[styles.progressBarFill, { width: '92%' }]} />
+            <View style={[styles.progressBarFill, { width: `${profileStrength}%` }]} />
           </View>
 
           <Text style={styles.strengthSubtitle}>
@@ -241,7 +267,7 @@ export default function EditProfileScreen() {
             <TextInput
               style={styles.textInput}
               value={formData.email}
-              onChangeText={(text) => setFormData({ ...formData, email: text })}
+              editable={false}
               keyboardType="email-address"
               autoCapitalize="none"
               placeholder="Email Address"
@@ -522,6 +548,10 @@ const styles = StyleSheet.create({
     height: 108,
     borderRadius: 54,
     backgroundColor: '#E2E8F0',
+  },
+  avatarFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cameraIconBtn: {
     position: 'absolute',

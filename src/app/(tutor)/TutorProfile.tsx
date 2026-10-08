@@ -3,7 +3,6 @@ import {
     Ionicons,
     MaterialCommunityIcons,
 } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -27,73 +26,60 @@ type BottomTab = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
 interface TutorProfile {
   fullName: string;
   email: string;
-  countryCode: string;
   phoneNumber: string;
   degree: string;
   locationTimezone: string;
   avatarUrl: string;
 }
 
-const STORAGE_KEY = '@tutormate_tutor_profile';
-
 export default function TutorProfileDetailsScreen() {
   const router = useRouter();
-  const { profile: authProfile, user, signOut } = useAuth();
+  const { profile: authProfile, user, signOut, loading: authLoading } = useAuth();
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('profile');
 
   const [profile, setProfile] = useState<TutorProfile>({
-    fullName: 'Dr. Sarah Jenkins',
-    email: 'sarah.jenkins@stanford.alumni.edu',
-    countryCode: '+1',
-    phoneNumber: '(415) 890–2411',
-    degree: 'Ph.D. in Applied Mathematics, Stanford University',
-    locationTimezone: 'San Francisco, CA (PST · GMT-8)',
-    avatarUrl:
-      'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80',
+    fullName: '',
+    email: '',
+    phoneNumber: '',
+    degree: '',
+    locationTimezone: '',
+    avatarUrl: '',
   });
 
-  // Load profile from Supabase & AsyncStorage on mount
   useEffect(() => {
+    if (authLoading) return;
     let isMounted = true;
     (async () => {
       try {
-        const savedData = await AsyncStorage.getItem(STORAGE_KEY);
-        if (savedData && isMounted) {
-          setProfile(JSON.parse(savedData));
-        }
+        if (!user) throw new Error('You must be signed in to view your tutor profile.');
 
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        const activeUser = currentUser || user;
-        if (!activeUser) return;
-
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', activeUser.id)
+          .eq('id', user.id)
           .single();
+        if (error) throw error;
+        if (data.role !== 'tutor') throw new Error('This profile is not registered as a tutor.');
 
-        if (isMounted && data) {
-          setProfile((prev) => ({
-            ...prev,
-            fullName: data.full_name || prev.fullName,
-            email: data.email || activeUser.email || prev.email,
-            avatarUrl: data.avatar_url || prev.avatarUrl,
-            degree: data.degree || data.bio || prev.degree,
-          }));
-        } else if (isMounted && activeUser) {
-          setProfile((prev) => ({
-            ...prev,
-            fullName: authProfile?.full_name || activeUser.user_metadata?.full_name || prev.fullName,
-            email: authProfile?.email || activeUser.email || prev.email,
-            avatarUrl: authProfile?.avatar_url || activeUser.user_metadata?.avatar_url || prev.avatarUrl,
-          }));
+        if (isMounted) {
+          setProfile({
+            fullName: data.full_name || authProfile?.full_name || '',
+            email: user.email || authProfile?.email || '',
+            phoneNumber: data.phone_number || '',
+            degree: data.education || '',
+            locationTimezone: data.location || '',
+            avatarUrl: data.avatar_url || '',
+          });
         }
       } catch (error) {
-        console.warn('Failed to load profile from database/local storage', error);
+        console.error('Failed to load tutor profile:', error);
+        if (isMounted) {
+          Alert.alert('Profile error', error instanceof Error ? error.message : 'Unable to load your profile.');
+        }
       }
     })();
     return () => { isMounted = false; };
-  }, [user, authProfile]);
+  }, [authLoading, user, authProfile]);
 
   const handleLogout = () => {
     router.replace('/welcome');
@@ -140,7 +126,7 @@ export default function TutorProfileDetailsScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* --- Page Heading --- */}
-        <Text style={styles.pageTitle}>Let's craft your profile</Text>
+        <Text style={styles.pageTitle}>Let&apos;s craft your profile</Text>
         <Text style={styles.pageSubtitle}>
           Introduce yourself to prospective students and build immediate academic trust.
         </Text>
@@ -148,7 +134,13 @@ export default function TutorProfileDetailsScreen() {
         {/* --- Photo Upload Hero Section --- */}
         <View style={styles.heroCard}>
           <View style={styles.avatarWrapper}>
-            <Image source={{ uri: profile.avatarUrl }} style={styles.avatarImage} />
+            {profile.avatarUrl ? (
+              <Image source={{ uri: profile.avatarUrl }} style={styles.avatarImage} />
+            ) : (
+              <View style={[styles.avatarImage, styles.avatarFallback]}>
+                <Ionicons name="person" size={36} color="#64748B" />
+              </View>
+            )}
             <TouchableOpacity
               activeOpacity={0.8}
               style={styles.cameraFloatingBtn}
@@ -167,7 +159,7 @@ export default function TutorProfileDetailsScreen() {
           <View style={styles.socialProofBadge}>
             <Ionicons name="checkmark-circle" size={15} color="#0D9488" />
             <Text style={styles.socialProofText}>
-              Tutors with photos get <Text style={styles.boldProof}>3.8× more session bookings</Text>
+              Add a clear headshot so students can recognize your profile.
             </Text>
           </View>
         </View>
@@ -211,7 +203,7 @@ export default function TutorProfileDetailsScreen() {
             />
           </View>
           <Text style={styles.fieldHelpText}>
-            We use this for session invites, payout receipts, and parent messaging alerts.
+            This is the email address associated with your TutorMate account.
           </Text>
         </View>
 
@@ -220,20 +212,7 @@ export default function TutorProfileDetailsScreen() {
           <Text style={styles.label}>
             Phone Number <Text style={styles.requiredAsterisk}>*</Text>
           </Text>
-          <View style={styles.phoneRow}>
-            {/* Country Selector */}
-            <TouchableOpacity
-              activeOpacity={0.7}
-              style={styles.countryPicker}
-              onPress={() => Alert.alert('Country Code', 'Select country code')}
-            >
-              <Text style={styles.flagIcon}>🇺🇸</Text>
-              <Text style={styles.countryCodeText}>{profile.countryCode}</Text>
-              <Ionicons name="chevron-down" size={15} color="#475569" />
-            </TouchableOpacity>
-
-            {/* Phone Input */}
-            <View style={[styles.inputContainer, styles.phoneInputContainer]}>
+          <View style={styles.inputContainer}>
               <Feather name="phone" size={18} color="#64748B" style={styles.inputLeadingIcon} />
               <TextInput
                 style={styles.textInput}
@@ -244,7 +223,6 @@ export default function TutorProfileDetailsScreen() {
                 placeholder="(555) 000-0000"
                 placeholderTextColor="#94A3B8"
               />
-            </View>
           </View>
         </View>
 
@@ -294,7 +272,7 @@ export default function TutorProfileDetailsScreen() {
             />
           </View>
           <Text style={styles.fieldHelpText}>
-            Ensures your session booking calendar auto-converts accurately for remote students.
+            Share the location details you want students to see on your tutor profile.
           </Text>
         </View>
 
@@ -306,8 +284,7 @@ export default function TutorProfileDetailsScreen() {
           <View style={styles.guaranteeContent}>
             <Text style={styles.guaranteeTitle}>TutorMate Academic Guarantee</Text>
             <Text style={styles.guaranteeText}>
-              Your credentials will earn a Verified Educator badge once reviewed, boosting discovery
-              placement in parent searches.
+              Keep your education and profile information accurate for students reviewing your tutor profile.
             </Text>
           </View>
         </View>
@@ -380,9 +357,6 @@ export default function TutorProfileDetailsScreen() {
               size={23}
               color={activeBottomTab === 'requests' ? '#2563EB' : '#64748B'}
             />
-            <View style={styles.redBadge}>
-              <Text style={styles.redBadgeText}>2</Text>
-            </View>
           </View>
           <Text
             style={[
@@ -524,6 +498,10 @@ const styles = StyleSheet.create({
     height: 96,
     borderRadius: 48,
     backgroundColor: '#CBD5E1',
+  },
+  avatarFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cameraFloatingBtn: {
     position: 'absolute',

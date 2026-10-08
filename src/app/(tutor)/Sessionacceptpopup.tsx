@@ -1,5 +1,5 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
     Alert,
@@ -14,9 +14,8 @@ import {
     View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
-// In production:
-// import { supabase } from '@/lib/supabase';
-// import { useRouter } from 'expo-router';
+import { supabase } from '../../../lib/supabase';
+import { formatBookingDate, getCurrentTutorId, getProfilesById } from '../../lib/tutorData';
 
 // Types
 type BottomTabType = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
@@ -31,96 +30,85 @@ interface AcceptedSessionPayload {
   roomLink: string;
 }
 
-const DEFAULT_SESSION: AcceptedSessionPayload = {
-  studentName: 'Marcus Sterling',
-  avatarUrl:
-    'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=200&auto=format&fit=crop&q=80',
-  subject: 'AP Calculus BC',
-  dateTime: 'Tomorrow, Mar 15 • 4:00 PM – 5:00 PM',
-  amountEarned: '$45.00',
-  studentEmail: 'marcus.s@school.edu',
-  roomLink: 'tutormate.io/room/calc-bc-882',
-};
-
-const STORAGE_KEY = '@last_accepted_session';
-
 export default function SessionAcceptPopupScreen() {
+  const router = useRouter();
+  const { id } = useLocalSearchParams<{ id?: string }>();
   const [modalVisible, setModalVisible] = useState<boolean>(true);
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTabType>('requests');
-  const [sessionData, setSessionData] = useState<AcceptedSessionPayload>(DEFAULT_SESSION);
+  const [sessionData, setSessionData] = useState<AcceptedSessionPayload | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    (async () => {
+    let mounted = true;
+    const loadAcceptedBooking = async () => {
       try {
-        const cached = await AsyncStorage.getItem(STORAGE_KEY);
-        if (cached) {
-          setSessionData(JSON.parse(cached));
-        } else {
-          await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SESSION));
+        if (!id) throw new Error('Booking ID is missing.');
+        const tutorId = await getCurrentTutorId();
+        const { data: booking, error } = await supabase.from('bookings')
+          .select('*')
+          .eq('id', id)
+          .eq('tutor_id', tutorId)
+          .single();
+        if (error) throw error;
+        if (booking.status !== 'accepted' && booking.status !== 'confirmed') {
+          throw new Error('This booking is not accepted.');
         }
-      } catch (e) {
-        console.warn('AsyncStorage cache fetch error', e);
+        const profiles = await getProfilesById([booking.student_id]);
+        const student = booking.student_id ? profiles.get(booking.student_id) : undefined;
+        if (mounted) {
+          setSessionData({
+            studentName: student?.full_name || booking.student_name || 'Student',
+            avatarUrl: student?.avatar_url || '',
+            subject: booking.subject,
+            dateTime: `${formatBookingDate(booking.session_date)} • ${booking.time_slot}`,
+            amountEarned: `$${Number(booking.total_price ?? 0).toFixed(2)}`,
+            studentEmail: student?.email || '',
+            roomLink: '',
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load accepted tutor booking:', error);
+        if (mounted) Alert.alert('Session update', error instanceof Error ? error.message : 'Unable to load the accepted session.');
+      } finally {
+        if (mounted) setLoading(false);
       }
-    })();
-  }, []);
+    };
+    void loadAcceptedBooking();
+    return () => { mounted = false; };
+  }, [id]);
 
   const handleCopyLink = () => {
-    // In React Native: Clipboard.setString(sessionData.roomLink);
-    Alert.alert('Link Copied', `Copied "${sessionData.roomLink}" to clipboard!`);
+    Alert.alert('Room link unavailable', 'No meeting link is stored for this booking.');
   };
 
   const handleCloseModal = () => {
     setModalVisible(false);
+    router.replace('/(tutor)/dashboard');
   };
+
+  if (!sessionData) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateText}>
+            {loading ? 'Loading accepted session…' : 'Accepted session details are unavailable.'}
+          </Text>
+          {!loading && (
+            <TouchableOpacity style={styles.returnButton} onPress={handleCloseModal}>
+              <Text style={styles.returnButtonText}>Back to requests</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#718096" />
 
-      {/* --- Blurred/Darkened Background (Simulating the screen behind modal) --- */}
-      <View style={styles.underlyingScreen}>
-        {/* Mock Incoming Requests Header behind backdrop */}
-        <View style={styles.bgTitleRow}>
-          <View style={styles.bgTitleGroup}>
-            <Text style={styles.bgTitleText}>Incoming Requests</Text>
-            <View style={styles.bgCountBadge}>
-              <Text style={styles.bgCountText}>3 New</Text>
-            </View>
-          </View>
-          <View style={styles.bgFilterBtn}>
-            <MaterialCommunityIcons name="filter-variant" size={18} color="#2563EB" />
-            <Text style={styles.bgFilterText}>Filter</Text>
-          </View>
-        </View>
-
-        {/* Mock Tabs behind backdrop */}
-        <View style={styles.bgSegmentContainer}>
-          <View style={[styles.bgTab, styles.bgTabActive]}>
-            <Text style={styles.bgTabTextActive}>Pending</Text>
-            <View style={styles.bgDot} />
-          </View>
-          <View style={styles.bgTab}>
-            <Text style={styles.bgTabText}>Accepted 8</Text>
-          </View>
-          <View style={styles.bgTab}>
-            <Text style={styles.bgTabText}>Declined</Text>
-          </View>
-        </View>
-
-        {/* Mock Pipeline Card behind backdrop */}
-        <View style={styles.bgPipelineCard}>
-          <View style={styles.bgPipelineLeft}>
-            <View style={styles.bgPipelineIcon}>
-              <MaterialCommunityIcons name="cash-multiple" size={20} color="#2563EB" />
-            </View>
-            <View>
-              <Text style={styles.bgPipelineTitle}>Estimated Pipeline</Text>
-              <Text style={styles.bgPipelineSub}>Pending total: $150.00</Text>
-            </View>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-        </View>
-      </View>
+      <View style={styles.underlyingScreen} />
 
       {/* --- Semi-transparent Modal Overlay --- */}
       <Modal
@@ -165,7 +153,13 @@ export default function SessionAcceptPopupScreen() {
 
             {/* Student & Session Overview Card */}
             <View style={styles.studentCard}>
-              <Image source={{ uri: sessionData.avatarUrl }} style={styles.studentAvatar} />
+              {sessionData.avatarUrl ? (
+                <Image source={{ uri: sessionData.avatarUrl }} style={styles.studentAvatar} />
+              ) : (
+                <View style={[styles.studentAvatar, styles.avatarFallback]}>
+                  <Ionicons name="person" size={20} color="#64748B" />
+                </View>
+              )}
 
               <View style={styles.studentMeta}>
                 <Text style={styles.studentName}>{sessionData.studentName}</Text>
@@ -175,29 +169,25 @@ export default function SessionAcceptPopupScreen() {
 
               <View style={styles.earningsBox}>
                 <Text style={styles.earnedAmount}>{sessionData.amountEarned}</Text>
-                <Text style={styles.earnedLabel}>Earned</Text>
+                <Text style={styles.earnedLabel}>Session total</Text>
               </View>
             </View>
 
-            {/* Calendar Invite Status Box */}
-            <View style={styles.calendarInviteCard}>
-              <View style={styles.calendarInviteLeft}>
-                <View style={styles.inviteCheckSquare}>
-                  <Ionicons name="checkmark" size={13} color="#0D9488" />
-                </View>
-                <View>
-                  <Text style={styles.inviteTitle}>Calendar Invite Synced</Text>
-                  <Text style={styles.inviteEmail}>{sessionData.studentEmail}</Text>
+            {sessionData.studentEmail ? (
+              <View style={styles.calendarInviteCard}>
+                <View style={styles.calendarInviteLeft}>
+                  <View style={styles.inviteCheckSquare}>
+                    <Ionicons name="mail-outline" size={13} color="#0D9488" />
+                  </View>
+                  <View>
+                    <Text style={styles.inviteTitle}>Student email</Text>
+                    <Text style={styles.inviteEmail}>{sessionData.studentEmail}</Text>
+                  </View>
                 </View>
               </View>
+            ) : null}
 
-              <View style={styles.activePill}>
-                <Text style={styles.activePillText}>Active</Text>
-              </View>
-            </View>
-
-            {/* Virtual Room Link Box */}
-            <View style={styles.roomLinkCard}>
+            {sessionData.roomLink ? <View style={styles.roomLinkCard}>
               <View style={styles.roomLinkLeft}>
                 <MaterialCommunityIcons
                   name="video-account"
@@ -224,7 +214,7 @@ export default function SessionAcceptPopupScreen() {
               >
                 <Feather name="copy" size={17} color="#475569" />
               </TouchableOpacity>
-            </View>
+            </View> : null}
           </View>
         </View>
       </Modal>
@@ -279,9 +269,6 @@ export default function SessionAcceptPopupScreen() {
               size={23}
               color={activeBottomTab === 'requests' ? '#2563EB' : '#64748B'}
             />
-            <View style={styles.redBadge}>
-              <Text style={styles.redBadgeText}>2</Text>
-            </View>
           </View>
           <Text
             style={[
@@ -341,6 +328,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#6B7280',
   },
+  emptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#FFFFFF',
+  },
+  emptyStateText: { color: '#475569', fontSize: 16, textAlign: 'center', marginBottom: 16 },
+  returnButton: { paddingHorizontal: 18, paddingVertical: 12, borderRadius: 10, backgroundColor: '#2563EB' },
+  returnButtonText: { color: '#FFFFFF', fontWeight: '700' },
   // Background screen layout to simulate blurred/inactive state
   underlyingScreen: {
     flex: 1,
@@ -426,6 +423,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#E2E8F0',
+  },
+  avatarFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: 14,
     padding: 14,
     marginTop: 20,
