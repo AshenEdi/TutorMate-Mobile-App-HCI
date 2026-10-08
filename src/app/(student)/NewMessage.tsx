@@ -1,31 +1,30 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
-    Alert,
-    Image,
-    Modal,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-    ActivityIndicator,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Modal,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-
 import { supabase } from "../../../lib/supabase";
 import { getOrCreateConversation } from "../../lib/chat";
 import {
-  pickChatImage,
-  pickChatDocument,
-  uploadChatAttachment,
   formatFileSize,
+  pickChatDocument,
+  pickChatImage,
   PickedAttachment,
+  uploadChatAttachment,
 } from "../../lib/chatAttachments";
 
 export default function NewMessageScreen() {
@@ -59,19 +58,9 @@ export default function NewMessageScreen() {
           console.warn("[NewMessage] Supabase profiles note:", dbError.message);
         }
 
-        // 3. Check for locally cached / AsyncStorage profile
-        let savedEditProfile: any = null;
-        let savedProfile: any = null;
-        try {
-          const editStr = await AsyncStorage.getItem('@tutormate_tutor_edit_profile');
-          if (editStr) savedEditProfile = JSON.parse(editStr);
-          const profStr = await AsyncStorage.getItem('@tutormate_tutor_profile');
-          if (profStr) savedProfile = JSON.parse(profStr);
-        } catch {}
-
         const rawList = dbProfiles || [];
 
-        // 4. Collect all tutors (role is tutor, case-insensitive, including verified, pending, unverified)
+        // 3. Collect all tutors (role is tutor, case-insensitive, including verified, pending, unverified)
         let tutorList = rawList.filter((p: any) => {
           if (p.role && p.role.toLowerCase() === 'tutor') return true;
           if (p.specialty || p.hourly_rate || p.education || p.degree) return true;
@@ -86,7 +75,7 @@ export default function NewMessageScreen() {
           }
         }
 
-        // 5. Exclude the current authenticated student from their own tutor list
+        // 4. Exclude the current authenticated student from their own tutor list
         if (currentUser) {
           tutorList = tutorList.filter((p: any) => p.id !== currentUser.id);
         }
@@ -135,31 +124,41 @@ export default function NewMessageScreen() {
       
       const convId = await getOrCreateConversation(user.id, selectedMentor);
       if (convId) {
-         if (draftAttachment) {
-           const uploadResult = await uploadChatAttachment(draftAttachment, convId, user.id);
-           if (uploadResult) {
-             await supabase.from("messages").insert({
-               conversation_id: convId,
-               sender_id: user.id,
-               content: message.trim() || null,
-               message_type: draftAttachment.type,
-               attachment_url: uploadResult.url,
-               attachment_name: uploadResult.name,
-               attachment_mime_type: uploadResult.mimeType,
-               attachment_size: uploadResult.size,
-               is_read: false,
-             });
-           }
-         } else if (message.trim()) {
-           await supabase.from("messages").insert({
-             conversation_id: convId,
-             sender_id: user.id,
-             content: message.trim(),
-             message_type: "text",
-             is_read: false
-           });
-         }
-         router.push({ pathname: "/(student)/ChatConversation", params: { conversationId: convId } });
+        if (draftAttachment) {
+          const uploadResult = await uploadChatAttachment(draftAttachment, convId, user.id);
+          if (uploadResult) {
+            await supabase.from("messages").insert({
+              conversation_id: convId,
+              sender_id: user.id,
+              content: message.trim() || null,
+              message_type: draftAttachment.type,
+              attachment_url: uploadResult.url,
+              attachment_name: uploadResult.name,
+              attachment_mime_type: uploadResult.mimeType,
+              attachment_size: uploadResult.size,
+              is_read: false,
+            });
+          }
+        } else if (message.trim()) {
+          await supabase.from("messages").insert({
+            conversation_id: convId,
+            sender_id: user.id,
+            content: message.trim(),
+            message_type: "text",
+            is_read: false,
+          });
+        }
+
+        // Update conversation last_message
+        await supabase
+          .from("conversations")
+          .update({
+            last_message: message.trim() || (draftAttachment ? `Sent an attachment` : "Started conversation"),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", convId);
+
+        router.push({ pathname: "/(student)/ChatConversation", params: { conversationId: convId, tutorId: selectedMentor } });
       } else {
         Alert.alert("Error", "Could not start conversation with selected tutor.");
       }
@@ -212,99 +211,108 @@ export default function NewMessageScreen() {
         </TouchableOpacity>
         <View style={styles.headerTitleRow}>
           <View style={styles.headerIcon}>
-            <Ionicons name="book" size={18} color="#FFFFFF" />
+            <Ionicons name="mail" size={18} color="#FFFFFF" />
           </View>
           <Text style={styles.headerTitle}>New Message</Text>
         </View>
-        <View style={{ width: 40 }} />
+        <TouchableOpacity 
+          style={styles.personAddButton} 
+          onPress={() => setShowTutorModal(true)}
+        >
+          <Ionicons name="people" size={20} color="#2563EB" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {/* --- DRAFT STATUS --- */}
+        {/* --- DRAFT HEADER --- */}
         <View style={styles.draftRow}>
           <View style={styles.draftInfo}>
             <View style={styles.draftIconBg}>
-              <Ionicons name="create-outline" size={18} color="#0D9488" />
+              <Ionicons name="create-outline" size={16} color="#0D9488" />
             </View>
-            <Text style={styles.draftText}>Drafting new thread</Text>
+            <Text style={styles.draftText}>Composing Direct Message</Text>
           </View>
           <TouchableOpacity onPress={handleSend} disabled={sending}>
-            <Text style={[styles.sendBtnText, sending && { opacity: 0.5 }]}>Send ➤</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* --- RECIPIENT SECTION --- */}
-        <View style={styles.formCard}>
-          <View style={styles.inputGroup}>
-            <View style={styles.inputRow}>
-              <Text style={styles.toLabel}>To:</Text>
-              <TextInput
-                style={styles.toInput}
-                placeholder="Search mentor or student name..."
-                placeholderTextColor="#94A3B8"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-              />
-              <TouchableOpacity 
-                style={styles.personAddButton} 
-                onPress={() => {
-                  setModalSearch("");
-                  setShowTutorModal(true);
-                }}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="person-add-outline" size={20} color="#2563EB" />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <TouchableOpacity style={styles.subjectRow}>
-            <Ionicons name="bookmark-outline" size={20} color="#64748B" />
-            <Text style={styles.subjectPlaceholder}>Link a Subject or Session (Optional)</Text>
-            <Ionicons name="chevron-down" size={20} color="#64748B" />
-          </TouchableOpacity>
-        </View>
-
-        {/* --- SUGGESTED MENTORS --- */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>SUGGESTED & RECENT MENTORS</Text>
-          <TouchableOpacity onPress={() => setShowTutorModal(true)}>
-            <Text style={styles.availableLink}>
-              {loading ? "loading..." : `${filteredMentors.length} available`}
+            <Text style={[styles.sendBtnText, sending && { opacity: 0.5 }]}>
+              {sending ? "Sending..." : "Send"}
             </Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.mentorList}>
+        {/* --- RECIPIENT CARD --- */}
+        <View style={styles.recipientCard}>
+          <View style={styles.recipientHeader}>
+            <View style={styles.recipientLabelRow}>
+              <Text style={styles.recipientLabel}>TO:</Text>
+              <Text style={styles.recipientSub}>Select Tutor from Directory</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.browseAllBtn}
+              onPress={() => setShowTutorModal(true)}
+            >
+              <Text style={styles.browseAllText}>Browse Directory</Text>
+              <Ionicons name="chevron-forward" size={14} color="#2563EB" />
+            </TouchableOpacity>
+          </View>
+          
+          <View style={styles.recipientInputWrapper}>
+            <TextInput
+              style={styles.recipientInput}
+              placeholder="Search tutor by name or subject..."
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {selectedMentor && (
+              <TouchableOpacity onPress={() => { setSelectedMentor(null); setSearchQuery(""); }}>
+                <Ionicons name="close-circle" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* --- RECENT MENTORS LIST --- */}
+        <View style={styles.mentorsSection}>
+          <View style={styles.mentorsSectionHeader}>
+            <Text style={styles.mentorsSectionTitle}>TUTOR DIRECTORY</Text>
+            <TouchableOpacity onPress={() => setShowTutorModal(true)}>
+              <Text style={styles.viewDirectoryLink}>View All ({mentors.length})</Text>
+            </TouchableOpacity>
+          </View>
+
           {loading && (
-            <View style={{ padding: 20, alignItems: 'center' }}>
+            <View style={{ paddingVertical: 20, alignItems: "center" }}>
               <ActivityIndicator size="small" color="#2563EB" />
             </View>
           )}
-          {!loading && filteredMentors.length === 0 && (
-            <View style={{ padding: 20, alignItems: 'center' }}>
-              <Text style={{ color: '#94A3B8' }}>No tutors found.</Text>
-            </View>
-          )}
-          {filteredMentors.map((mentor) => (
+
+          {!loading && filteredMentors.slice(0, 5).map((mentor) => (
             <TouchableOpacity 
               key={mentor.id} 
-              style={[styles.mentorCard, selectedMentor === mentor.id && { backgroundColor: '#EFF6FF', borderColor: '#2563EB', borderWidth: 1 }]}
+              style={[
+                styles.mentorCard, 
+                selectedMentor === mentor.id && { backgroundColor: '#EFF6FF', borderColor: '#2563EB', borderWidth: 1 }
+              ]}
               onPress={() => handleSelectTutor(mentor)}
             >
               <View style={styles.mentorAvatarWrapper}>
-                <Image source={{ uri: mentor.avatar_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop" }} style={styles.mentorAvatar} />
+                <Image 
+                  source={{ uri: mentor.avatar_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop" }} 
+                  style={styles.mentorAvatar} 
+                />
                 <View style={styles.onlineBadge} />
               </View>
               <View style={styles.mentorInfo}>
                 <View style={styles.mentorNameRow}>
-                  <Text style={styles.mentorName}>{mentor.full_name || mentor.name || (mentor.email ? mentor.email.split('@')[0] : "Tutor")}</Text>
+                  <Text style={styles.mentorName}>
+                    {mentor.full_name || mentor.name || (mentor.email ? mentor.email.split('@')[0] : "Tutor")}
+                  </Text>
                   <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginLeft: 4 }} />
                 </View>
                 <View style={styles.mentorDetailRow}>
-                  <Text style={styles.mentorDetail} numberOfLines={1}>{mentor.specialty || (Array.isArray(mentor.subjects) ? mentor.subjects.join(', ') : mentor.subjects) || mentor.title || mentor.education || "Available for Session"}</Text>
+                  <Text style={styles.mentorDetail} numberOfLines={1}>
+                    {mentor.specialty || (Array.isArray(mentor.subjects) ? mentor.subjects.join(', ') : mentor.subjects) || mentor.title || mentor.education || "Available for Session"}
+                  </Text>
                 </View>
               </View>
               <View style={styles.addMentorBtn}>
@@ -326,7 +334,7 @@ export default function NewMessageScreen() {
           
           <TextInput
             style={styles.messageInput}
-            placeholder="Write your message to your mentor or student... E.g. ask about session prep, homework assignments, or upcoming schedule flexibility."
+            placeholder="Write your message to your mentor... E.g. ask about session prep, homework assignments, or upcoming schedule flexibility."
             placeholderTextColor="#94A3B8"
             multiline
             value={message}
@@ -365,10 +373,6 @@ export default function NewMessageScreen() {
               <TouchableOpacity style={styles.actionIconBtn} onPress={handlePickImage}>
                 <Ionicons name="camera-outline" size={22} color="#64748B" />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.proposeTimeBtn}>
-                <Ionicons name="calendar-outline" size={16} color="#64748B" style={{ marginRight: 6 }} />
-                <Text style={styles.proposeTimeText}>Propose Time</Text>
-              </TouchableOpacity>
             </View>
             <TouchableOpacity onPress={() => { setMessage(""); setDraftAttachment(null); }}>
               <Text style={styles.clearBtnText}>Clear</Text>
@@ -394,8 +398,14 @@ export default function NewMessageScreen() {
 
         {/* --- START CONVERSATION --- */}
         <View style={styles.bottomActions}>
-          <TouchableOpacity style={styles.startBtn} onPress={handleSend}>
-            <Text style={styles.startBtnText}>Start Conversation →</Text>
+          <TouchableOpacity 
+            style={[styles.startBtn, (!selectedMentor || (!message.trim() && !draftAttachment) || sending) && { opacity: 0.6 }]} 
+            onPress={handleSend}
+            disabled={!selectedMentor || (!message.trim() && !draftAttachment) || sending}
+          >
+            <Text style={styles.startBtnText}>
+              {sending ? "Starting Conversation..." : "Start Conversation →"}
+            </Text>
           </TouchableOpacity>
           <View style={styles.responseTimeRow}>
             <Ionicons name="time-outline" size={14} color="#64748B" style={{ marginRight: 6 }} />
@@ -403,30 +413,6 @@ export default function NewMessageScreen() {
           </View>
         </View>
       </ScrollView>
-
-      {/* --- BOTTOM TAB BAR --- */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/dashboard")}>
-          <Ionicons name="home-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Home</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/searchscreen")}>
-          <Ionicons name="search-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Search</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/MySessions")}>
-          <Ionicons name="calendar-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Sessions</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/MessagesInbox")}>
-          <Ionicons name="chatbox-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Messages</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/StudentProfile")}>
-          <Ionicons name="person-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Profile</Text>
-        </TouchableOpacity>
-      </View>
 
       {/* --- SELECT TUTOR MODAL --- */}
       <Modal
@@ -442,10 +428,8 @@ export default function NewMessageScreen() {
             onPress={() => setShowTutorModal(false)} 
           />
           <View style={styles.modalContainer}>
-            {/* Handle bar for bottom sheet feel */}
             <View style={styles.modalHandleBar} />
 
-            {/* Modal Header */}
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>Select Tutor</Text>
@@ -461,7 +445,6 @@ export default function NewMessageScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Search Input in Modal */}
             <View style={styles.modalSearchBox}>
               <Ionicons name="search-outline" size={18} color="#94A3B8" style={{ marginRight: 8 }} />
               <TextInput
@@ -479,7 +462,6 @@ export default function NewMessageScreen() {
               )}
             </View>
 
-            {/* Tutors List */}
             <ScrollView 
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.modalListContent}
@@ -597,9 +579,16 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0F172A",
   },
+  personAddButton: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: "#EFF6FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 100,
+    paddingBottom: 40,
   },
   draftRow: {
     flexDirection: "row",
@@ -629,68 +618,75 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#2563EB",
   },
-  formCard: {
+  recipientCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 20,
     padding: 16,
-    marginBottom: 24,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: "#F1F5F9",
   },
-  inputGroup: {
-    marginBottom: 0,
-  },
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: 40,
-  },
-  toLabel: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#2563EB",
-    marginRight: 10,
-  },
-  toInput: {
-    flex: 1,
-    fontSize: 14,
-    color: "#1E293B",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#F1F5F9",
-    marginVertical: 12,
-  },
-  subjectRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: 40,
-  },
-  subjectPlaceholder: {
-    flex: 1,
-    fontSize: 14,
-    color: "#64748B",
-    marginLeft: 10,
-  },
-  sectionHeader: {
+  recipientHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 12,
   },
-  sectionTitle: {
+  recipientLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  recipientLabel: {
     fontSize: 12,
     fontWeight: "800",
-    color: "#94A3B8",
-    letterSpacing: 1,
+    color: "#64748B",
+    marginRight: 6,
   },
-  availableLink: {
+  recipientSub: {
     fontSize: 12,
-    fontWeight: "700",
-    color: "#2563EB",
+    color: "#94A3B8",
   },
-  mentorList: {
-    marginBottom: 24,
+  browseAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  browseAllText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#2563EB",
+    marginRight: 2,
+  },
+  recipientInputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  recipientInput: {
+    flex: 1,
+    fontSize: 14,
+    color: "#0F172A",
+  },
+  mentorsSection: {
+    marginBottom: 20,
+  },
+  mentorsSectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  mentorsSectionTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#64748B",
+  },
+  viewDirectoryLink: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#2563EB",
   },
   mentorCard: {
     flexDirection: "row",
@@ -698,7 +694,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderRadius: 16,
     padding: 12,
-    marginBottom: 12,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: "#F1F5F9",
   },
@@ -707,9 +703,10 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   mentorAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#E2E8F0",
   },
   onlineBadge: {
     position: "absolute",
@@ -730,37 +727,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   mentorName: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "700",
     color: "#0F172A",
   },
   mentorDetailRow: {
-    flexDirection: "row",
-    alignItems: "center",
     marginTop: 2,
   },
   mentorDetail: {
     fontSize: 12,
     color: "#64748B",
-    flex: 1,
-  },
-  upcomingBadge: {
-    backgroundColor: "#D1FAE5",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginLeft: 8,
-  },
-  upcomingBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#059669",
   },
   addMentorBtn: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#F1F5F9",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -768,7 +750,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderRadius: 20,
     padding: 16,
-    marginBottom: 24,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: "#F1F5F9",
   },
@@ -783,7 +765,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   messageTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "700",
     color: "#0F172A",
   },
@@ -793,18 +775,18 @@ const styles = StyleSheet.create({
   },
   messageInput: {
     fontSize: 14,
-    color: "#1E293B",
-    height: 120,
+    color: "#0F172A",
+    minHeight: 100,
     textAlignVertical: "top",
-    backgroundColor: "#F8FAFC",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   messageActions: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+    paddingTop: 12,
   },
   actionIcons: {
     flexDirection: "row",
@@ -812,19 +794,6 @@ const styles = StyleSheet.create({
   },
   actionIconBtn: {
     marginRight: 16,
-  },
-  proposeTimeBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F1F5F9",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  proposeTimeText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#64748B",
   },
   clearBtnText: {
     fontSize: 13,
@@ -899,38 +868,6 @@ const styles = StyleSheet.create({
   responseTimeText: {
     fontSize: 12,
     color: "#64748B",
-  },
-  personAddButton: {
-    padding: 6,
-    borderRadius: 8,
-    backgroundColor: "#EFF6FF",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  tabBar: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#F1F5F9",
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-  },
-  tabItem: {
-    alignItems: "center",
-  },
-  tabLabel: {
-    fontSize: 10,
-    color: "#9CA3AF",
-    marginTop: 2,
-  },
-  tabLabelActive: {
-    color: "#2563EB",
-    fontWeight: "600",
   },
   /* --- MODAL STYLES --- */
   modalBackdrop: {

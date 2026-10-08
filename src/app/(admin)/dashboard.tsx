@@ -1,21 +1,19 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
-  Modal,
   Platform,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 import {
   AccountCard,
-  AccountCardType,
   AccountCategory,
   AccountData,
   AdminActionBanner,
@@ -26,91 +24,61 @@ import {
   PlatformPulse,
   StatusFilter,
 } from "../../components/admin";
-import { useAuth } from "../../context/AuthContext";
-
-const INITIAL_ACCOUNTS: AccountData[] = [
-  {
-    id: "1",
-    type: "tutor",
-    name: "Dr. Sarah Jenkins",
-    avatar:
-      "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200",
-    badgeText: "Active",
-    badgeType: "active",
-    subtitle: "AP Calculus Specialist • Ph.D. MIT",
-    hourlyRate: "$45",
-    rating: 4.9,
-    reviewsCount: 125,
-    accountId: "#TUT-8842",
-  },
-  {
-    id: "2",
-    type: "student",
-    name: "Maya Alvarez",
-    avatar:
-      "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
-    badgeText: "Good Standing",
-    badgeType: "good_standing",
-    subtitle: "Grade 11 • Algebra II & Chem",
-    completedSessions: 24,
-    lastActive: "Last active: 2h ago",
-  },
-  {
-    id: "3",
-    type: "dispute",
-    name: "Alex Rivera",
-    avatar:
-      "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=200",
-    badgeText: "Report Pending",
-    badgeType: "dispute",
-    subtitle: "Physics Mentor • University Senior",
-    disputeTag: "Session Dispute",
-    disputeReportCount: "1 Report Pending",
-    disputeDescription:
-      "Student reported tutor no-show for AP Physics exam prep session on Oct 24th. Refund requested ($40.00).",
-  },
-  {
-    id: "4",
-    type: "tutor",
-    name: "Dr. Marcus Vance",
-    avatar:
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200",
-    badgeText: "Active",
-    badgeType: "active",
-    subtitle: "AP Physics C Specialist • Harvard M.S.",
-    hourlyRate: "$60",
-    rating: 4.95,
-    reviewsCount: 204,
-    accountId: "#TUT-9104",
-  },
-  {
-    id: "5",
-    type: "student",
-    name: "Lucas Bennett",
-    avatar:
-      "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200",
-    badgeText: "Good Standing",
-    badgeType: "good_standing",
-    subtitle: "Grade 12 • AP Biology & Pre-Med",
-    completedSessions: 18,
-    lastActive: "Last active: 1d ago",
-  },
-];
+import {
+  getDirectoryAccounts,
+  getPlatformPulseMetrics,
+  PlatformMetricsData,
+} from "../../services/adminService";
 
 export default function AdminDashboardScreen() {
   const router = useRouter();
-  const { profile, signOut } = useAuth();
-
   const [activeBottomTab, setActiveBottomTab] = useState<AdminTab>("overview");
   const [selectedCategory, setSelectedCategory] =
     useState<AccountCategory>("All");
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>("Active");
   const [searchQuery, setSearchQuery] = useState("");
-  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [accounts, setAccounts] = useState<AccountData[]>([]);
+  const [metrics, setMetrics] = useState<PlatformMetricsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadData = async () => {
+    try {
+      const [fetchedAccounts, fetchedMetrics] = await Promise.all([
+        getDirectoryAccounts(),
+        getPlatformPulseMetrics(),
+      ]);
+      setAccounts(fetchedAccounts);
+      setMetrics(fetchedMetrics);
+    } catch (err) {
+      console.warn("Failed to load dashboard data:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData();
+  };
+
+  // Dynamic category counts
+  const categoryCounts = useMemo(() => {
+    const all = accounts.length;
+    const students = accounts.filter((a) => a.type === "student").length;
+    const tutors = accounts.filter((a) => a.type === "tutor").length;
+    const suspended = accounts.filter((a) => a.badgeText === "Suspended").length;
+    return { all, students, tutors, suspended };
+  }, [accounts]);
 
   // Filter accounts based on category, status, and search query
   const filteredAccounts = useMemo(() => {
-    return INITIAL_ACCOUNTS.filter((acc) => {
+    return accounts.filter((acc) => {
       // 1. Search Query filter
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
@@ -121,36 +89,35 @@ export default function AdminDashboardScreen() {
       }
 
       // 2. Category Tab filter
-      if (selectedCategory === "Students" && acc.type !== "student")
-        return false;
+      if (selectedCategory === "Students" && acc.type !== "student") return false;
       if (selectedCategory === "Tutors" && acc.type !== "tutor") return false;
-      if (selectedCategory === "Suspended") return false;
+      if (selectedCategory === "Suspended" && acc.badgeText !== "Suspended") return false;
 
       // 3. Status filter
       if (selectedStatus === "Reported" && acc.type !== "dispute") return false;
+      if (selectedStatus === "Active" && acc.badgeText !== "Active" && acc.badgeText !== "Good Standing") return false;
+      if (selectedStatus === "Pending" && acc.badgeText !== "Pending" && acc.badgeType !== "pending") return false;
+      if (selectedStatus === "High Risk" && acc.badgeText !== "Suspended" && acc.badgeText !== "Report Pending") return false;
 
       return true;
     });
-  }, [selectedCategory, selectedStatus, searchQuery]);
-
-  const handleSignOut = async () => {
-    setShowProfileModal(false);
-    await signOut();
-    router.replace("/welcome");
-  };
+  }, [accounts, selectedCategory, selectedStatus, searchQuery]);
 
   const handleCheckReportedIssues = () => {
-    router.push("/(admin)/AdminQueue");
+    router.replace("/(admin)/AdminQueue");
   };
 
   const handleReviewCase = (item: AccountData) => {
-    router.push("/(admin)/DisputeResolution");
+    router.push({
+      pathname: "/(admin)/DisputeResolution",
+      params: { caseId: item.id, userName: item.name },
+    });
   };
 
   const handleAuditProfile = (item: AccountData) => {
     Alert.alert(
-      "Audit Profile",
-      `Tutor: ${item.name}\n${item.subtitle}\nRate: ${item.hourlyRate}/hr\nRating: ${item.rating} ★\n\nBackground check status: Verified & Approved.`
+      "Audit Profile Details",
+      `User: ${item.name}\n${item.subtitle}\nID: ${item.accountId || "—"}\nRate: ${item.hourlyRate || "—"}\nRating: ${item.rating || "—"} ★\nStatus: ${item.badgeText}`
     );
   };
 
@@ -160,6 +127,59 @@ export default function AdminDashboardScreen() {
       `User: ${item.name}\nType: ${item.type.toUpperCase()}\nStatus: ${item.badgeText}\n${item.subtitle}`
     );
   };
+
+  const dynamicPulseMetrics = metrics
+    ? [
+        {
+          id: "students",
+          iconName: "school",
+          iconType: "ionicons" as const,
+          iconColor: "#3B82F6",
+          iconBgColor: "#EEF2FF",
+          badgeText: metrics.studentsGrowth,
+          badgeTextColor: "#059669",
+          value: metrics.totalStudents,
+          label: "Total Students",
+        },
+        {
+          id: "mentors",
+          iconName: "account-tie-outline",
+          iconType: "material" as const,
+          iconColor: "#0D9488",
+          iconBgColor: "#CCFBF1",
+          badgeText: metrics.tutorsApprovalRate,
+          badgeTextColor: "#0D9488",
+          value: metrics.activeTutors,
+          label: "Active Mentors",
+        },
+        {
+          id: "classes",
+          iconName: "ticket-confirmation-outline",
+          iconType: "material" as const,
+          iconColor: "#4F46E5",
+          iconBgColor: "#EEF2FF",
+          badgeText: "All Time",
+          badgeTextColor: "#64748B",
+          value: metrics.completedClasses,
+          label: "Completed Classes",
+        },
+        {
+          id: "flags",
+          iconName: "flag",
+          iconType: "ionicons" as const,
+          iconColor: "#D97706",
+          iconBgColor: "#FEF3C7",
+          badgeText: Number(metrics.unresolvedFlags) > 0 ? "Alert" : "Clean",
+          badgeTextColor: "#FFFFFF",
+          badgeBgColor: Number(metrics.unresolvedFlags) > 0 ? "#DC2626" : "#0D9488",
+          isBadgePill: true,
+          value: metrics.unresolvedFlags,
+          label: "Unresolved Flags",
+        },
+      ]
+    : undefined;
+
+  const totalPendingActionItems = Number(metrics?.unresolvedFlags ?? 0);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -172,26 +192,29 @@ export default function AdminDashboardScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* --- Action Items Banner Component --- */}
         <AdminActionBanner
-          count={14}
-          newCount={14}
+          count={totalPendingActionItems}
+          newCount={totalPendingActionItems}
           onPressAction={handleCheckReportedIssues}
         />
 
         {/* --- Platform Pulse 2x2 Metrics Component --- */}
-        <PlatformPulse />
+        <PlatformPulse metrics={dynamicPulseMetrics} />
 
         {/* --- Directory & Records Search & Filter Component --- */}
         <DirectoryControls
+          totalCount={`${accounts.length} Accounts`}
+          categoryCounts={categoryCounts}
           selectedCategory={selectedCategory}
           onSelectCategory={setSelectedCategory}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           selectedStatus={selectedStatus}
           onSelectStatus={setSelectedStatus}
-          reportedCount={14}
+          reportedCount={totalPendingActionItems}
         />
 
         {/* --- Records List of AccountCard Components --- */}
@@ -220,61 +243,15 @@ export default function AdminDashboardScreen() {
 
       {/* --- Bottom Navigation Component --- */}
       <AdminBottomNav
-        activeTab={activeBottomTab}
+        activeTab="overview"
         onTabPress={(tab) => {
           if (tab === "reports") {
-            router.push("/(admin)/AdminQueue");
+            router.replace("/(admin)/AdminQueue");
           } else if (tab === "users") {
-            setActiveBottomTab(tab);
-            setSelectedCategory("All");
-            setSelectedStatus("Active");
-          } else {
-            setActiveBottomTab(tab);
+            router.replace("/(admin)/users");
           }
         }}
       />
-
-      {/* --- Admin Profile & Sign Out Modal --- */}
-      <Modal
-        visible={showProfileModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowProfileModal(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalBackdrop}
-          activeOpacity={1}
-          onPress={() => setShowProfileModal(false)}
-        >
-          <View style={styles.modalCard} onStartShouldSetResponder={() => true}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalAvatarCircle}>
-                <Ionicons name="shield-checkmark" size={28} color="#0052CC" />
-              </View>
-              <Text style={styles.modalAdminName}>
-                {profile?.full_name ?? "Administrator"}
-              </Text>
-              <Text style={styles.modalAdminEmail}>
-                {profile?.email ?? "admin@tutormate.io"}
-              </Text>
-              <View style={styles.modalRolePill}>
-                <Text style={styles.modalRoleText}>Role: Administrator</Text>
-              </View>
-            </View>
-
-            <View style={styles.modalDivider} />
-
-            <TouchableOpacity
-              style={styles.modalSignOutBtn}
-              activeOpacity={0.85}
-              onPress={handleSignOut}
-            >
-              <Ionicons name="log-out-outline" size={18} color="#DC2626" />
-              <Text style={styles.modalSignOutText}>Sign Out</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -307,83 +284,5 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     color: "#94A3B8",
     textAlign: "center",
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.45)",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 24,
-  },
-  modalCard: {
-    width: "100%",
-    maxWidth: 340,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 24,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  modalHeader: {
-    alignItems: "center",
-    gap: 6,
-    width: "100%",
-  },
-  modalAvatarCircle: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: "#EFF6FF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  modalAdminName: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#0F172A",
-  },
-  modalAdminEmail: {
-    fontSize: 13,
-    color: "#64748B",
-  },
-  modalRolePill: {
-    backgroundColor: "#EEF4FF",
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginTop: 4,
-  },
-  modalRoleText: {
-    fontSize: 11.5,
-    fontWeight: "700",
-    color: "#0052CC",
-  },
-  modalDivider: {
-    height: 1,
-    backgroundColor: "#F1F5F9",
-    width: "100%",
-    marginVertical: 18,
-  },
-  modalSignOutBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#FEF2F2",
-    width: "100%",
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "#FECACA",
-  },
-  modalSignOutText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#DC2626",
   },
 });

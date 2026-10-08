@@ -14,6 +14,12 @@ export type StatusFilter = "Active" | "Pending" | "Reported" | "High Risk";
 
 interface DirectoryControlsProps {
   totalCount?: string;
+  categoryCounts?: {
+    all?: number;
+    students?: number;
+    tutors?: number;
+    suspended?: number;
+  };
   selectedCategory: AccountCategory;
   onSelectCategory: (cat: AccountCategory) => void;
   searchQuery: string;
@@ -23,15 +29,9 @@ interface DirectoryControlsProps {
   reportedCount?: number;
 }
 
-const CATEGORIES: { id: AccountCategory; label: string }[] = [
-  { id: "All", label: "All (1,605)" },
-  { id: "Students", label: "Students (1,420)" },
-  { id: "Tutors", label: "Tutors (185)" },
-  { id: "Suspended", label: "Suspended (0)" },
-];
-
 export function DirectoryControls({
   totalCount = "1,605 Accounts",
+  categoryCounts,
   selectedCategory,
   onSelectCategory,
   searchQuery,
@@ -40,6 +40,12 @@ export function DirectoryControls({
   onSelectStatus,
   reportedCount = 14,
 }: DirectoryControlsProps) {
+  const categories: { id: AccountCategory; label: string }[] = [
+    { id: "All", label: `All (${categoryCounts?.all ?? 1605})` },
+    { id: "Students", label: `Students (${categoryCounts?.students ?? 1420})` },
+    { id: "Tutors", label: `Tutors (${categoryCounts?.tutors ?? 185})` },
+    { id: "Suspended", label: `Suspended (${categoryCounts?.suspended ?? 0})` },
+  ];
   return (
     <View style={styles.container}>
       {/* Title & Account Count */}
@@ -56,7 +62,7 @@ export function DirectoryControls({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.categoryScroll}
       >
-        {CATEGORIES.map((cat) => {
+        {categories.map((cat) => {
           const isActive = selectedCategory === cat.id;
           return (
             <TouchableOpacity

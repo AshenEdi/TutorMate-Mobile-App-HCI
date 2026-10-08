@@ -4,7 +4,6 @@ import * as ImagePicker from "expo-image-picker";
 import { useEffect, useState } from "react";
 import {
     ActivityIndicator,
-    Alert,
     Image,
     Platform,
     SafeAreaView,
@@ -17,6 +16,7 @@ import {
     View,
 } from "react-native";
 import { supabase } from "../../../lib/supabase";
+import { AlertModal, AlertType } from "../../components/ui/AlertModal";
 
 const DEFAULT_AVATAR =
   "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
@@ -32,6 +32,33 @@ export default function EditStudentProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showToast, setShowToast] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    type: AlertType;
+    title: string;
+    message: string;
+    onOk?: () => void;
+  }>({
+    visible: false,
+    type: "error",
+    title: "",
+    message: "",
+  });
+
+  const showAlert = (
+    title: string,
+    message: string,
+    type: AlertType = "error",
+    onOk?: () => void
+  ) => {
+    setAlertConfig({
+      visible: true,
+      type,
+      title,
+      message,
+      onOk,
+    });
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -62,7 +89,7 @@ export default function EditStudentProfileScreen() {
         }
       } catch (error) {
         console.error("Failed to load student profile:", error);
-        Alert.alert("Error", "Unable to load your profile.");
+        showAlert("Error", "Unable to load your profile.", "error");
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -112,11 +139,7 @@ export default function EditStudentProfileScreen() {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        if (Platform.OS === "web") {
-          window.alert("Permission needed\n\nPlease allow access to your photos.");
-        } else {
-          Alert.alert("Permission Needed", "Please allow access to your photos.");
-        }
+        showAlert("Permission Needed", "Please allow access to your photos.", "warning");
         return;
       }
 
@@ -139,11 +162,7 @@ export default function EditStudentProfileScreen() {
       }
     } catch (error) {
       console.error("Image picker error:", error);
-      if (Platform.OS === "web") {
-        window.alert("Error\n\nCould not open image picker.");
-      } else {
-        Alert.alert("Error", "Could not open image picker.");
-      }
+      showAlert("Error", "Could not open image picker.", "error");
     }
   };
 
@@ -156,7 +175,7 @@ export default function EditStudentProfileScreen() {
       } = await supabase.auth.getUser();
       if (userError) throw userError;
       if (!user) {
-        Alert.alert("Error", "Please sign in to save your profile.");
+        showAlert("Error", "Please sign in to save your profile.", "error");
         return;
       }
 
@@ -172,7 +191,7 @@ export default function EditStudentProfileScreen() {
         })
         .eq("id", user.id);
       if (error) {
-        Alert.alert("Error", error.message);
+        showAlert("Error", error.message, "error");
         return;
       }
 
@@ -180,7 +199,7 @@ export default function EditStudentProfileScreen() {
       setTimeout(() => setShowToast(false), 3000);
     } catch (error) {
       console.error("Failed to save student profile:", error);
-      Alert.alert("Error", error instanceof Error ? error.message : "Unable to save your profile.");
+      showAlert("Error", error instanceof Error ? error.message : "Unable to save your profile.", "error");
     } finally {
       setSaving(false);
     }
@@ -389,6 +408,19 @@ export default function EditStudentProfileScreen() {
           <Text style={[styles.tabLabel, styles.tabLabelActive]}>Profile</Text>
         </TouchableOpacity>
       </View>
+
+      {/* --- IN-APP ALERT MODAL --- */}
+      <AlertModal
+        visible={alertConfig.visible}
+        type={alertConfig.type}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        onClose={() => {
+          const action = alertConfig.onOk;
+          setAlertConfig((prev) => ({ ...prev, visible: false }));
+          action?.();
+        }}
+      />
     </SafeAreaView>
   );
 }
