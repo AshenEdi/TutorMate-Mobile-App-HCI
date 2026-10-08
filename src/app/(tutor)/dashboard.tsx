@@ -285,7 +285,11 @@ export default function TutorBookingScreen() {
                       color={item.subjectTextColor}
                       style={styles.subjectIconStyle}
                     />
-                    <Text style={[styles.subjectTagText, { color: item.subjectTextColor }]}>
+                    <Text
+                      style={[styles.subjectTagText, { color: item.subjectTextColor }]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
                       {item.subject}
                     </Text>
                   </View>
@@ -724,9 +728,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
     marginBottom: 10,
   },
   subjectTag: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
@@ -737,6 +744,8 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   subjectTagText: {
+    flex: 1,
+    minWidth: 0,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -744,6 +753,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    flexShrink: 0,
   },
   modeText: {
     fontSize: 12,
