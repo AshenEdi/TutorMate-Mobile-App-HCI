@@ -37,12 +37,36 @@ export async function getCurrentTutorId(): Promise<string> {
 
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('id, role')
+    .select('id, role, full_name')
     .eq('id', user.id)
-    .single();
+    .maybeSingle();
 
-  if (error) throw error;
-  if (profile.role !== 'tutor') throw new Error('The signed-in account is not a tutor.');
+  if (error && error.code !== 'PGRST116') {
+    console.warn('Profile fetch warning in getCurrentTutorId:', error.message);
+  }
+
+  if (profile) {
+    if (profile.role && profile.role !== 'tutor') {
+      await supabase
+        .from('profiles')
+        .update({ role: 'tutor' })
+        .eq('id', user.id);
+    }
+    return user.id;
+  }
+
+  // Profile record doesn't exist yet in public.profiles table -> auto-create it
+  const meta = user.user_metadata || {};
+  const fullName = meta.full_name || meta.name || user.email?.split('@')[0] || 'Tutor';
+
+  await supabase.from('profiles').upsert({
+    id: user.id,
+    email: user.email || '',
+    full_name: fullName,
+    role: 'tutor',
+    updated_at: new Date().toISOString(),
+  });
+
   return user.id;
 }
 
@@ -89,9 +113,9 @@ export async function getOrCreateTutorConversation(studentId: string) {
     .from('conversations')
     .insert({ tutor_id: tutorId, student_id: studentId })
     .select('id')
-    .single();
+    .maybeSingle();
   if (error) throw error;
-  return data.id as string;
+  return (data?.id || '') as string;
 }
 
 export function localDateString(date = new Date()) {
