@@ -46,7 +46,7 @@ interface StudentProfileData {
 
 export default function UserProfileScreen() {
   const router = useRouter();
-  const { profile: authProfile, user, signOut } = useAuth();
+  const { profile: authProfile, user, loading: authLoading, signOut } = useAuth();
   const [profile, setProfile] = useState<StudentProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [sessionsCompleted, setSessionsCompleted] = useState(0);
@@ -89,19 +89,17 @@ export default function UserProfileScreen() {
     let isMounted = true;
 
     async function loadStudentData() {
-      try {
-        const {
-          data: { user: currentUser },
-          error: userError,
-        } = await supabase.auth.getUser();
-        if (userError) throw userError;
-        const activeUser = currentUser || user;
-        if (!activeUser) return;
+      if (authLoading) return;
+      if (!user) {
+        if (isMounted) setLoading(false);
+        return;
+      }
 
+      try {
         const { data, error } = await supabase
           .from("profiles")
           .select("full_name, email, education, avatar_url, wallet_balance")
-          .eq("id", activeUser.id)
+          .eq("id", user.id)
           .single();
         if (error) throw error;
 
@@ -114,21 +112,21 @@ export default function UserProfileScreen() {
           supabase
             .from("bookings")
             .select("*", { count: "exact", head: true })
-            .eq("student_id", activeUser.id)
+            .eq("student_id", user.id)
             .eq("status", "completed"),
           supabase
             .from("bookings")
             .select("tutor_id")
-            .eq("student_id", activeUser.id)
+            .eq("student_id", user.id)
             .not("tutor_id", "is", null),
           supabase
             .from("reviews")
             .select("rating")
-            .eq("student_id", activeUser.id),
+            .eq("student_id", user.id),
           supabase
             .from("bookings")
             .select("subject")
-            .eq("student_id", activeUser.id)
+            .eq("student_id", user.id)
             .not("subject", "is", null),
         ]);
         if (completedSessionsResult.error) throw completedSessionsResult.error;
@@ -190,7 +188,7 @@ export default function UserProfileScreen() {
     return () => {
       isMounted = false;
     };
-  }, [user]);
+  }, [authLoading, user]);
 
   const activeProfile = profile || authProfile;
 
