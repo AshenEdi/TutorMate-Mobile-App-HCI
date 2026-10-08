@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { supabase } from "../../../lib/supabase";
 import { TutorBottomNav } from "../../components/TutorBottomNav";
+import { TutorHeader } from "../../components/TutorHeader";
 import { getOrCreateConversation } from "../../lib/chat";
 
 interface ActiveSessionUser {
@@ -311,23 +312,7 @@ export default function TutorMessagesScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- BRAND TOP NAVBAR --- */}
-      <View style={styles.topBar}>
-        <View style={styles.brandContainer}>
-          <View style={styles.brandIcon}>
-            <Ionicons name="book" size={18} color="#FFFFFF" />
-          </View>
-          <Text style={styles.brandTitle}>TutorMate</Text>
-        </View>
-
-        <TouchableOpacity style={styles.profileAvatar}>
-          <Image
-            source={{
-              uri: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-            }}
-            style={styles.avatarImg}
-          />
-        </TouchableOpacity>
-      </View>
+      <TutorHeader />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

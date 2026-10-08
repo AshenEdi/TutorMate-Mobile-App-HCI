@@ -21,6 +21,7 @@ import {
 import { supabase } from '../../../lib/supabase';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
 import { useAuth } from '../../context/AuthContext';
+import { TutorHeader } from '../../components/TutorHeader';
 type BottomTab = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
 
 interface TutorProfile {
@@ -92,34 +93,7 @@ export default function TutorProfileDetailsScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
 
-      {/* --- Top App Header --- */}
-      <View style={styles.header}>
-        <View style={styles.headerLeftGroup}>
-          <TouchableOpacity 
-            activeOpacity={0.7} 
-            style={styles.headerBackBtn}
-            onPress={() => {
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.replace("/(tutor)/dashboard");
-              }
-            }}
-          >
-            <Ionicons name="arrow-back" size={24} color="#0F172A" />
-          </TouchableOpacity>
-
-          <View style={styles.headerBrandBadge}>
-            <Ionicons name="book" size={19} color="#FFFFFF" />
-          </View>
-
-          <Text style={styles.headerTitle}>Profile</Text>
-        </View>
-
-        <TouchableOpacity activeOpacity={0.7} style={styles.headerProfileBtn}>
-          <Ionicons name="person" size={20} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
+      <TutorHeader />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}

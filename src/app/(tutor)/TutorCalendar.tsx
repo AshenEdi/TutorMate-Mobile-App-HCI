@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { supabase } from '../../../lib/supabase';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
+import { TutorHeader } from '../../components/TutorHeader';
 import { getCurrentTutorId } from '../../lib/tutorData';
 
 type BottomTab = 'sessions' | 'calendar' | 'requests' | 'messages' | 'profile';
@@ -311,34 +312,7 @@ export default function ManageScheduleScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* --- Top App Header --- */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          activeOpacity={0.7} 
-          style={styles.headerBackBtn}
-          onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace("/(tutor)/dashboard");
-            }
-          }}
-        >
-          <Ionicons name="arrow-back" size={24} color="#0F172A" />
-        </TouchableOpacity>
-
-        <View style={styles.headerBrandBadge}>
-          <Ionicons name="book" size={19} color="#FFFFFF" />
-        </View>
-
-        <TouchableOpacity 
-          activeOpacity={0.7} 
-          style={styles.headerProfileBtn}
-          onPress={() => router.push("/(tutor)/TutorProfile")}
-        >
-          <Ionicons name="person" size={20} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
+      <TutorHeader />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
