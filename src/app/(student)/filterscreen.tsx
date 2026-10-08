@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import {
     Alert,
+    PanResponder,
     Platform,
     SafeAreaView,
     ScrollView,
@@ -16,12 +17,20 @@ import {
 
 export default function SearchFilterScreen() {
   const router = useRouter();
+  const filterParams = useLocalSearchParams<{
+    subject?: string;
+    timeSlot?: string;
+    rating?: string;
+    minPrice?: string;
+    maxPrice?: string;
+  }>();
 
   // State Management
   const [subjects, setSubjects] = useState<string[]>([]);
-  const [selectedSubject, setSelectedSubject] = useState("");
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState("morning");
-  const [selectedRating, setSelectedRating] = useState("4.5");
+  const [selectedSubject, setSelectedSubject] = useState((filterParams.subject ?? "").trim());
+  const [subjectDropdownOpen, setSubjectDropdownOpen] = useState(false);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState((filterParams.timeSlot ?? "").trim());
+  const [selectedRating, setSelectedRating] = useState((filterParams.rating ?? "").trim());
   const [availability, setAvailability] = useState<{
     morning: string | null;
     afternoon: string | null;
@@ -30,6 +39,71 @@ export default function SearchFilterScreen() {
   const [availabilityDates, setAvailabilityDates] = useState<string[]>([]);
   const [priceHistogram, setPriceHistogram] = useState<number[]>([]);
   const [priceBounds, setPriceBounds] = useState<[number, number]>([0, 0]);
+  const [selectedPriceRange, setSelectedPriceRange] = useState<[number, number]>([0, 0]);
+  const [priceRangePanHandlers, setPriceRangePanHandlers] = useState<
+    ReturnType<typeof PanResponder.create>["panHandlers"] | null
+  >(null);
+  const sliderWidth = useRef(0);
+  const priceBoundsRef = useRef(priceBounds);
+  const selectedPriceRangeRef = useRef(selectedPriceRange);
+  const activeThumbRef = useRef<"min" | "max">("min");
+
+  useEffect(() => {
+    priceBoundsRef.current = priceBounds;
+    selectedPriceRangeRef.current = selectedPriceRange;
+  }, [priceBounds, selectedPriceRange]);
+
+  const getPriceRangeValue = (value: number, min: number, max: number) => {
+    if (!Number.isFinite(value) || max <= min) return 0;
+    return Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
+  };
+
+  const [activeMinPrice, activeMaxPrice] = selectedPriceRange;
+  const minRangePercent = getPriceRangeValue(activeMinPrice, priceBounds[0], priceBounds[1]);
+  const maxRangePercent = getPriceRangeValue(activeMaxPrice, priceBounds[0], priceBounds[1]);
+  const activeMinPercent = Math.min(Math.max(minRangePercent, 0), 100);
+  const activeMaxPercent = Math.min(Math.max(maxRangePercent, 0), 100);
+
+  useEffect(() => {
+    const updatePriceAtPosition = (locationX: number) => {
+      const [minBound, maxBound] = priceBoundsRef.current;
+      const width = sliderWidth.current;
+      if (width <= 0 || maxBound <= minBound) return;
+
+      const percent = Math.min(1, Math.max(0, locationX / width));
+      const nextPrice = Math.round(minBound + percent * (maxBound - minBound));
+      const [currentMin, currentMax] = selectedPriceRangeRef.current;
+      const nextRange: [number, number] =
+        activeThumbRef.current === "min"
+          ? [Math.min(nextPrice, currentMax), currentMax]
+          : [currentMin, Math.max(nextPrice, currentMin)];
+      selectedPriceRangeRef.current = nextRange;
+      setSelectedPriceRange(nextRange);
+    };
+
+    const responder = PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (event) => {
+        const position = event.nativeEvent.locationX;
+        const percent = sliderWidth.current > 0 ? position / sliderWidth.current : 0;
+        const [minBound, maxBound] = priceBoundsRef.current;
+        const [currentMin, currentMax] = selectedPriceRangeRef.current;
+        const minPercent = maxBound > minBound
+          ? ((currentMin - minBound) / (maxBound - minBound)) * 100
+          : 0;
+        const maxPercent = maxBound > minBound
+          ? ((currentMax - minBound) / (maxBound - minBound)) * 100
+          : 0;
+        const minDistance = Math.abs(percent * 100 - minPercent);
+        const maxDistance = Math.abs(percent * 100 - maxPercent);
+        activeThumbRef.current = minDistance <= maxDistance ? "min" : "max";
+        updatePriceAtPosition(position);
+      },
+      onPanResponderMove: (event) => updatePriceAtPosition(event.nativeEvent.locationX),
+    });
+    setPriceRangePanHandlers(responder.panHandlers);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -119,6 +193,19 @@ export default function SearchFilterScreen() {
           });
           setAvailabilityDates(dates);
           setPriceBounds([minRate, maxRate]);
+          const requestedMin = filterParams.minPrice?.trim()
+            ? Number(filterParams.minPrice)
+            : Number.NaN;
+          const requestedMax = filterParams.maxPrice?.trim()
+            ? Number(filterParams.maxPrice)
+            : Number.NaN;
+          const initialMin = Number.isFinite(requestedMin)
+            ? Math.min(maxRate, Math.max(minRate, requestedMin))
+            : minRate;
+          const initialMax = Number.isFinite(requestedMax)
+            ? Math.min(maxRate, Math.max(initialMin, requestedMax))
+            : maxRate;
+          setSelectedPriceRange([initialMin, initialMax]);
           setPriceHistogram(scaledHistogram);
         }
       } catch (error) {
@@ -131,7 +218,7 @@ export default function SearchFilterScreen() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [filterParams.maxPrice, filterParams.minPrice]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -201,20 +288,57 @@ export default function SearchFilterScreen() {
           <TouchableOpacity
             style={styles.dropdownSelector}
             activeOpacity={0.8}
-            onPress={() => {
-              if (subjects.length === 0) return;
-              const nextIdx = (subjects.indexOf(selectedSubject) + 1) % subjects.length;
-              setSelectedSubject(subjects[nextIdx]);
-            }}
+            onPress={() => setSubjectDropdownOpen((open) => !open)}
+            accessibilityRole="button"
+            accessibilityLabel={`Subject: ${selectedSubject || "No subjects available"}`}
+            accessibilityState={{ expanded: subjectDropdownOpen }}
           >
             <View style={styles.dropdownLeft}>
               <View style={styles.blueDot} />
-              <Text style={styles.dropdownText}>
+              <Text style={styles.dropdownText} numberOfLines={1} ellipsizeMode="tail">
                 {selectedSubject || "No subjects available"}
               </Text>
             </View>
-            <Ionicons name="chevron-down" size={18} color="#64748B" />
+            <Ionicons
+              name={subjectDropdownOpen ? "chevron-up" : "chevron-down"}
+              size={18}
+              color="#64748B"
+              style={styles.dropdownChevron}
+            />
           </TouchableOpacity>
+          {subjectDropdownOpen && subjects.length > 0 && (
+            <View style={styles.subjectOptions}>
+              {subjects.map((subject) => {
+                const isSelected = subject === selectedSubject;
+                return (
+                  <TouchableOpacity
+                    key={subject}
+                    style={styles.subjectOption}
+                    onPress={() => {
+                      setSelectedSubject(subject);
+                      setSubjectDropdownOpen(false);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                  >
+                    <Text
+                      style={[
+                        styles.subjectOptionText,
+                        isSelected && styles.subjectOptionTextSelected,
+                      ]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {subject}
+                    </Text>
+                    {isSelected && (
+                      <Ionicons name="checkmark" size={18} color="#2563EB" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
         </View>
 
         {/* --- SECTION 2: AVAILABILITY --- */}
@@ -244,7 +368,9 @@ export default function SearchFilterScreen() {
                 styles.timeBlock,
                 selectedTimeSlot === "morning" && styles.timeBlockActive,
               ]}
-              onPress={() => setSelectedTimeSlot("morning")}
+              onPress={() =>
+                setSelectedTimeSlot((current) => current === "morning" ? "" : "morning")
+              }
             >
               <Ionicons
                 name="sunny-outline"
@@ -275,7 +401,9 @@ export default function SearchFilterScreen() {
                 styles.timeBlock,
                 selectedTimeSlot === "afternoon" && styles.timeBlockActive,
               ]}
-              onPress={() => setSelectedTimeSlot("afternoon")}
+              onPress={() =>
+                setSelectedTimeSlot((current) => current === "afternoon" ? "" : "afternoon")
+              }
             >
               <Ionicons
                 name="sunny"
@@ -307,7 +435,9 @@ export default function SearchFilterScreen() {
                 styles.timeBlock,
                 selectedTimeSlot === "evening" && styles.timeBlockActive,
               ]}
-              onPress={() => setSelectedTimeSlot("evening")}
+              onPress={() =>
+                setSelectedTimeSlot((current) => current === "evening" ? "" : "evening")
+              }
             >
               <Ionicons
                 name="moon-outline"
@@ -333,21 +463,6 @@ export default function SearchFilterScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Time Range Slider Representation */}
-          <View style={styles.timeRangeLabels}>
-            <Text style={styles.rangeLimitText}>
-              Earliest: {availabilityDates[0] || "No dates listed"}
-            </Text>
-            <Text style={styles.rangeLimitText}>
-              Latest: {availabilityDates[availabilityDates.length - 1] || "No dates listed"}
-            </Text>
-          </View>
-
-          <View style={styles.sliderTrackBackground}>
-            <View style={styles.sliderTrackActive} />
-            <View style={[styles.sliderThumb, { left: "0%" }]} />
-            <View style={[styles.sliderThumb, { left: "35%" }]} />
-          </View>
         </View>
 
         {/* --- SECTION 3: TUTOR RATING --- */}
@@ -372,7 +487,9 @@ export default function SearchFilterScreen() {
                   styles.ratingOptionRow,
                   isChecked && styles.ratingOptionRowActive,
                 ]}
-                onPress={() => setSelectedRating(item.id)}
+                onPress={() =>
+                  setSelectedRating((current) => current === item.id ? "" : item.id)
+                }
               >
                 <View style={styles.checkboxContainer}>
                   <View
@@ -429,7 +546,7 @@ export default function SearchFilterScreen() {
             </View>
             <View style={styles.pricePill}>
               <Text style={styles.pricePillText}>
-                ${priceBounds[0].toFixed(0)}/hr — ${priceBounds[1].toFixed(0)}/hr
+                ${activeMinPrice.toFixed(0)}/hr — ${activeMaxPrice.toFixed(0)}/hr
               </Text>
             </View>
           </View>
@@ -452,15 +569,41 @@ export default function SearchFilterScreen() {
           </View>
 
           {/* Range Track */}
-          <View style={styles.sliderTrackBackground}>
-            <View
-              style={[styles.sliderTrackActive, { left: "10%", width: "80%" }]}
-            />
+          <View
+            style={styles.sliderTrackContainer}
+            onLayout={(event) => {
+              sliderWidth.current = event.nativeEvent.layout.width;
+            }}
+            {...(priceRangePanHandlers ?? {})}
+            accessible
+            accessibilityRole="adjustable"
+            accessibilityLabel="Hourly price range"
+            accessibilityHint="Drag or tap to adjust the minimum and maximum hourly price"
+            accessibilityValue={{
+              min: priceBounds[0],
+              max: priceBounds[1],
+              now: activeMinPrice,
+              text: `$${activeMinPrice} to $${activeMaxPrice} per hour`,
+            }}
+          >
+            <View style={styles.sliderTrackBackground}>
+              <View
+                style={[
+                  styles.sliderTrackActive,
+                  {
+                    left: `${Math.min(activeMinPercent, activeMaxPercent)}%`,
+                    width: `${Math.max(8, Math.abs(activeMaxPercent - activeMinPercent))}%`,
+                  },
+                ]}
+              />
+              <View style={[styles.sliderHandle, { left: `${activeMinPercent}%` }]} />
+              <View style={[styles.sliderHandle, { left: `${activeMaxPercent}%` }]} />
+            </View>
           </View>
 
           <View style={styles.priceMinMaxRow}>
-            <Text style={styles.minMaxText}>Min: ${priceBounds[0].toFixed(0)}/hr</Text>
-            <Text style={styles.minMaxText}>Max: ${priceBounds[1].toFixed(0)}/hr</Text>
+            <Text style={styles.minMaxText}>Min: ${activeMinPrice.toFixed(0)}/hr</Text>
+            <Text style={styles.minMaxText}>Max: ${activeMaxPrice.toFixed(0)}/hr</Text>
           </View>
         </View>
 
@@ -494,8 +637,8 @@ export default function SearchFilterScreen() {
                 subject: selectedSubject,
                 timeSlot: selectedTimeSlot,
                 rating: selectedRating,
-                minPrice: String(priceBounds[0]),
-                maxPrice: String(priceBounds[1]),
+                minPrice: String(activeMinPrice),
+                maxPrice: String(activeMaxPrice),
               },
             });
           }}
@@ -510,9 +653,18 @@ export default function SearchFilterScreen() {
           style={styles.resetBtn}
           onPress={() => {
             setSelectedSubject(subjects[0] || "");
-            setSelectedTimeSlot("morning");
-            setSelectedRating("4.5");
-            router.push("/(student)/searchscreen");
+            setSelectedTimeSlot("");
+            setSelectedRating("");
+            router.push({
+              pathname: "/(student)/searchscreen",
+              params: {
+                subject: "",
+                timeSlot: "",
+                rating: "",
+                minPrice: "",
+                maxPrice: "",
+              },
+            });
           }}
         >
           <Text style={styles.resetBtnText}>Reset to Default</Text>
@@ -689,8 +841,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   dropdownLeft: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
+    minWidth: 0,
   },
   blueDot: {
     width: 8,
@@ -700,9 +854,43 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   dropdownText: {
+    flex: 1,
+    minWidth: 0,
     fontSize: 14,
     fontWeight: "600",
     color: "#0F172A",
+  },
+  dropdownChevron: {
+    flexShrink: 0,
+    marginLeft: 8,
+  },
+  subjectOptions: {
+    marginTop: 8,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  subjectOption: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  subjectOptionText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    color: "#334155",
+  },
+  subjectOptionTextSelected: {
+    color: "#1D4ED8",
+    fontWeight: "700",
   },
   timeBlocksRow: {
     flexDirection: "row",
@@ -737,14 +925,10 @@ const styles = StyleSheet.create({
   timeBlockSubActive: {
     color: "#BFDBFE",
   },
-  timeRangeLabels: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  sliderTrackContainer: {
+    marginTop: 10,
     marginBottom: 8,
-  },
-  rangeLimitText: {
-    fontSize: 11,
-    color: "#64748B",
+    paddingVertical: 10,
   },
   sliderTrackBackground: {
     height: 6,
@@ -752,24 +936,29 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     position: "relative",
     justifyContent: "center",
-    marginVertical: 6,
+    overflow: "visible",
   },
   sliderTrackActive: {
     position: "absolute",
-    left: 0,
-    width: "35%",
     height: 6,
     backgroundColor: "#2563EB",
     borderRadius: 3,
   },
-  sliderThumb: {
+  sliderHandle: {
     position: "absolute",
+    top: -6,
     width: 18,
     height: 18,
     borderRadius: 9,
     backgroundColor: "#FFFFFF",
     borderWidth: 3,
     borderColor: "#2563EB",
+    marginLeft: -9,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   ratingOptionRow: {
     flexDirection: "row",

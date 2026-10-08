@@ -88,6 +88,39 @@ export default function TutorSearchScreen() {
   const [tutors, setTutors] = useState<Tutor[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const subjectParam = (searchParams.subject ?? "").trim();
+  const timeSlotParam = (searchParams.timeSlot ?? "").trim();
+  const ratingParam = (searchParams.rating ?? "").trim();
+  const minPriceParam = (searchParams.minPrice ?? "").trim();
+  const maxPriceParam = (searchParams.maxPrice ?? "").trim();
+  const hasActiveFilters = Boolean(subjectParam || timeSlotParam || ratingParam || minPriceParam || maxPriceParam);
+
+  const openFilterScreen = () => {
+    router.push({
+      pathname: "/(student)/filterscreen",
+      params: {
+        subject: subjectParam,
+        timeSlot: timeSlotParam,
+        rating: ratingParam,
+        minPrice: minPriceParam,
+        maxPrice: maxPriceParam,
+      },
+    });
+  };
+
+  const removeFilters = () => {
+    router.replace({
+      pathname: "/(student)/searchscreen",
+      params: {
+        subject: "",
+        timeSlot: "",
+        rating: "",
+        minPrice: "",
+        maxPrice: "",
+      },
+    });
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -397,25 +430,35 @@ export default function TutorSearchScreen() {
     if (!matchesSearch) return false;
 
     // Apply route filter parameters from filterscreen.tsx
-    if (searchParams.rating) {
-      const minRating = parseFloat(searchParams.rating);
+    if (ratingParam) {
+      const minRating = parseFloat(ratingParam);
       if (!isNaN(minRating) && tutor.rating < minRating) return false;
     }
 
-    if (searchParams.minPrice) {
-      const minP = parseFloat(searchParams.minPrice);
+    if (minPriceParam) {
+      const minP = parseFloat(minPriceParam);
       if (!isNaN(minP) && tutor.hourlyRate < minP) return false;
     }
 
-    if (searchParams.maxPrice) {
-      const maxP = parseFloat(searchParams.maxPrice);
+    if (maxPriceParam) {
+      const maxP = parseFloat(maxPriceParam);
       if (!isNaN(maxP) && tutor.hourlyRate > maxP) return false;
     }
 
-    if (searchParams.timeSlot && tutor.availabilityWindows) {
-      const slot = searchParams.timeSlot as 'morning' | 'afternoon' | 'evening';
+    if (timeSlotParam && tutor.availabilityWindows) {
+      const slot = timeSlotParam as 'morning' | 'afternoon' | 'evening';
       if (slot && !tutor.availabilityWindows[slot]) {
         return false;
+      }
+    }
+
+    if (subjectParam) {
+      const requestedSubject = subjectParam.toLowerCase();
+      if (requestedSubject !== "all subjects") {
+        const tutorText = `${tutor.title} ${tutor.degreeBadge.text} ${tutor.name}`.toLowerCase();
+        if (!tutorText.includes(requestedSubject)) {
+          return false;
+        }
       }
     }
 
@@ -488,11 +531,29 @@ export default function TutorSearchScreen() {
           </View>
 
           <TouchableOpacity
+            style={[
+              styles.applyButton,
+              hasActiveFilters ? styles.removeFiltersButtonActive : styles.removeFiltersButtonDisabled,
+            ]}
+            onPress={removeFilters}
+            disabled={!hasActiveFilters}
+            accessibilityRole="button"
+            accessibilityLabel="Remove filters"
+            accessibilityHint="Clears all selected tutor filters"
+          >
+            <Ionicons
+              name="close-circle-outline"
+              size={20}
+              color={hasActiveFilters ? "#2563EB" : "#64748B"}
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={styles.filterButton}
-            onPress={() => router.push("/(student)/filterscreen")}
+            onPress={openFilterScreen}
           >
             <Ionicons name="options-outline" size={20} color="#0284C7" />
-            <View style={styles.filterActiveDot} />
+            {hasActiveFilters && <View style={styles.filterActiveDot} />}
           </TouchableOpacity>
         </View>
 
@@ -825,6 +886,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#0F172A",
   },
+  applyButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 8,
+  },
+  removeFiltersButtonActive: {
+    backgroundColor: "#DBEAFE",
+  },
+  removeFiltersButtonDisabled: {
+    backgroundColor: "#E2E8F0",
+  },
   filterButton: {
     width: 44,
     height: 44,
@@ -832,7 +907,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#E0F2FE",
     justifyContent: "center",
     alignItems: "center",
-    marginLeft: 10,
+    marginLeft: 8,
     position: "relative",
   },
   filterActiveDot: {
