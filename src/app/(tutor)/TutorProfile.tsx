@@ -140,7 +140,7 @@ export default function TutorProfileDetailsScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* --- Page Heading --- */}
-        <Text style={styles.pageTitle}>Let's craft your profile</Text>
+        <Text style={styles.pageTitle}>Let&apos;s craft your profile</Text>
         <Text style={styles.pageSubtitle}>
           Introduce yourself to prospective students and build immediate academic trust.
         </Text>
