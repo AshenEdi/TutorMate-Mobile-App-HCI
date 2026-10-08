@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
+import { NotificationPopover } from '../../components/NotificationPopover';
 import { supabase } from '../../../lib/supabase';
 import {
   formatBookingDate,
@@ -148,13 +149,16 @@ export default function TutorBookingScreen() {
 
         
 
-        <TouchableOpacity
-          activeOpacity={0.7}
-          style={styles.headerProfileBtn}
-          onPress={() => router.push('/(tutor)/TutorProfile')}
-        >
-          <Ionicons name="person" size={20} color="#FFFFFF" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <NotificationPopover />
+          <TouchableOpacity
+            activeOpacity={0.7}
+            style={styles.headerProfileBtn}
+            onPress={() => router.push('/(tutor)/TutorProfile')}
+          >
+            <Ionicons name="person" size={20} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView

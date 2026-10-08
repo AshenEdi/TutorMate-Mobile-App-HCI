@@ -62,8 +62,9 @@ export default function NotificationsScreen() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
+      const channelName = `notifications_screen_${Date.now()}`;
       channel = supabase
-        .channel('public:notifications')
+        .channel(channelName)
         .on(
           'postgres_changes',
           {
