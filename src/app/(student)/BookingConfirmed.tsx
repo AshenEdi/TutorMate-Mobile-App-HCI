@@ -1,5 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { supabase } from "../../../lib/supabase";
+import { getOrCreateConversation } from "../../lib/chat";
 import {
   Image,
   Platform,
@@ -16,6 +18,7 @@ export default function BookingConfirmedScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     bookingRef?: string;
+    tutorId?: string;
     tutorName?: string;
     tutorAvatar?: string;
     subject?: string;
@@ -24,6 +27,20 @@ export default function BookingConfirmedScreen() {
     price?: string;
     focusText?: string;
   }>();
+
+  const handleChat = async () => {
+    if (!params.tutorId) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const convId = await getOrCreateConversation(user.id, params.tutorId);
+      if (convId) {
+        router.push({ pathname: "/(student)/ChatConversation", params: { conversationId: convId } });
+      }
+    } catch (e) {
+      console.warn("Failed to open chat", e);
+    }
+  };
 
   const bookingRef = params.bookingRef || "TM-89420-BC";
   const tutorName = params.tutorName || "Dr. Sarah Jenkins";
@@ -142,7 +159,7 @@ export default function BookingConfirmedScreen() {
             </View>
             <TouchableOpacity 
               style={styles.chatBtn}
-              onPress={() => router.push("/(student)/ChatConversation")}
+              onPress={handleChat}
             >
               <Ionicons name="chatbubble-outline" size={20} color="#1E293B" />
             </TouchableOpacity>
