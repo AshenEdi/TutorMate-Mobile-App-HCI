@@ -10,6 +10,25 @@ export function NotificationPopover() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  const fetchNotifications = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Fetch top 5 recent notifications
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    if (!error && data) {
+      setNotifications(data);
+      const unread = data.filter(n => n.is_unread).length;
+      setUnreadCount(unread);
+    }
+  };
+
   useEffect(() => {
     fetchNotifications();
 
@@ -29,25 +48,6 @@ export function NotificationPopover() {
       supabase.removeChannel(channel);
     };
   }, []);
-
-  const fetchNotifications = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    // Fetch top 5 recent notifications
-    const { data, error } = await supabase
-      .from("notifications")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(5);
-
-    if (!error && data) {
-      setNotifications(data);
-      const unread = data.filter(n => n.is_unread).length;
-      setUnreadCount(unread);
-    }
-  };
 
   const handleNotificationPress = () => {
     setIsOpen(false);
