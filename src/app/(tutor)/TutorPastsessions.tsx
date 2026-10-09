@@ -90,7 +90,10 @@ export default function TutorPastSessionsScreen() {
           (booking.status === 'accepted' || booking.status === 'confirmed')
         ).length);
         const pastBookings = bookings.filter((booking) =>
-          booking.status === 'completed' || booking.status === 'cancelled' || booking.status === 'declined'
+          booking.status === 'completed' ||
+          booking.status === 'cancelled' ||
+          booking.status === 'declined' ||
+          booking.session_date < today
         );
         const profiles = await getProfilesById(pastBookings.map((booking) => booking.student_id));
         if (!mounted) return;
@@ -120,7 +123,11 @@ export default function TutorPastSessionsScreen() {
             sessionMode: booking.delivery_format || '',
             dateStr: formatBookingDate(booking.session_date),
             timeStr: `${booking.time_slot}${booking.duration ? ` (${booking.duration})` : ''}`,
-            status: booking.status === 'completed' ? 'Completed' : booking.status === 'declined' ? 'Declined' : 'Cancelled',
+            status: booking.status === 'declined'
+              ? 'Declined'
+              : booking.status === 'cancelled'
+                ? 'Cancelled'
+                : 'Completed',
             payoutAmount: `$${total.toFixed(2)}`,
             payoutStatus,
             hasSessionNotes: Boolean(booking.focus_notes),

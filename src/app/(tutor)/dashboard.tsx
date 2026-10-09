@@ -67,6 +67,16 @@ export default function TutorBookingScreen() {
   const [selectedDisputeForResponse, setSelectedDisputeForResponse] = useState<DisputeRecord | null>(null);
   const [responseStatement, setResponseStatement] = useState("");
   const [submittingResponse, setSubmittingResponse] = useState(false);
+  const [decliningBooking, setDecliningBooking] = useState<BookingRequest | null>(null);
+  const [declining, setDeclining] = useState<boolean>(false);
+
+  const showMessage = (title: string, message: string) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -130,23 +140,52 @@ export default function TutorBookingScreen() {
     return () => { mounted = false; };
   }, []);
 
-  const updateRequestStatus = async (id: string, status: 'accepted' | 'declined') => {
+  const handleAccept = async (bookingId: string) => {
     try {
       const tutorId = await getCurrentTutorId();
       const { error } = await supabase
         .from('bookings')
-        .update({ status, updated_at: new Date().toISOString() })
-        .eq('id', id)
+        .update({ status: 'accepted', updated_at: new Date().toISOString() })
+        .eq('id', bookingId)
         .eq('tutor_id', tutorId);
       if (error) throw error;
       setRequests((previous) => previous.map((item) =>
-        item.id === id ? { ...item, status: status === 'accepted' ? 'Accepted' : 'Declined' } : item
+        item.id === bookingId ? { ...item, status: 'Accepted' } : item
       ));
-      Alert.alert(status === 'accepted' ? 'Session Accepted' : 'Session Declined',
-        status === 'accepted' ? 'Session has been confirmed and scheduled.' : 'Request has been declined.');
+      showMessage('Success', 'Booking accepted.');
     } catch (error) {
       console.error('Failed to update booking status:', error);
-      Alert.alert('Update failed', error instanceof Error ? error.message : 'Unable to update this request.');
+      showMessage('Error', error instanceof Error ? error.message : 'Something went wrong.');
+    }
+  };
+
+  const handleDeclinePress = (booking: BookingRequest) => {
+    setDecliningBooking(booking);
+  };
+
+  const handleConfirmDecline = async () => {
+    if (!decliningBooking) return;
+
+    setDeclining(true);
+    try {
+      const tutorId = await getCurrentTutorId();
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status: 'declined', updated_at: new Date().toISOString() })
+        .eq('id', decliningBooking.id)
+        .eq('tutor_id', tutorId);
+      if (error) throw error;
+
+      setRequests((previous) => previous.map((item) =>
+        item.id === decliningBooking.id ? { ...item, status: 'Declined' } : item
+      ));
+      setDecliningBooking(null);
+      showMessage('Success', 'Booking declined.');
+    } catch (error) {
+      console.error('Failed to update booking status:', error);
+      showMessage('Error', error instanceof Error ? error.message : 'Something went wrong.');
+    } finally {
+      setDeclining(false);
     }
   };
 
@@ -427,25 +466,24 @@ export default function TutorBookingScreen() {
                 </View>
               </View>
 
-              {/* Action Buttons */}
+              {/* Pending Request Actions */}
               {item.status === 'Pending' && (
-                <View style={styles.buttonGroup}>
+                <View style={styles.requestActions}>
                   <TouchableOpacity
                     activeOpacity={0.75}
-                    style={styles.declineButton}
-                    onPress={() => void updateRequestStatus(item.id, 'declined')}
+                    style={styles.requestDeclineButton}
+                    onPress={() => handleDeclinePress(item)}
+                    disabled={declining}
                   >
-                    <Ionicons name="close" size={18} color="#0F172A" />
-                    <Text style={styles.declineText}>Decline</Text>
+                    <Text style={styles.requestDeclineText}>Decline</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
                     activeOpacity={0.8}
-                    style={styles.acceptButton}
-                    onPress={() => void updateRequestStatus(item.id, 'accepted')}
+                    style={styles.requestAcceptButton}
+                    onPress={() => void handleAccept(item.id)}
                   >
-                    <Ionicons name="checkmark" size={18} color="#FFFFFF" />
-                    <Text style={styles.acceptText}>Accept Session</Text>
+                    <Text style={styles.requestAcceptText}>Accept</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -672,6 +710,54 @@ export default function TutorBookingScreen() {
                 {submittingResponse ? "Submitting..." : "Submit Explanation to Admin"}
               </Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* --- Decline Request Confirmation Modal --- */}
+      <Modal
+        visible={decliningBooking !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!declining) setDecliningBooking(null);
+        }}
+      >
+        <View style={styles.declineModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => {
+              if (!declining) setDecliningBooking(null);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Close decline confirmation"
+          />
+          <View style={styles.declineModalCard}>
+            <Text style={styles.declineModalTitle}>Decline Request</Text>
+            <Text style={styles.declineModalMessage}>
+              Are you sure you want to decline this session request?
+            </Text>
+            <View style={styles.declineModalButtonRow}>
+              <TouchableOpacity
+                style={styles.declineModalCancelButton}
+                onPress={() => setDecliningBooking(null)}
+                disabled={declining}
+                accessibilityRole="button"
+              >
+                <Text style={styles.declineModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.declineModalConfirmButton, declining && styles.declineModalButtonDisabled]}
+                onPress={() => void handleConfirmDecline()}
+                disabled={declining}
+                accessibilityRole="button"
+              >
+                <Text style={styles.declineModalConfirmText}>
+                  {declining ? 'Declining...' : 'Decline'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1000,6 +1086,94 @@ const styles = StyleSheet.create({
   buttonGroup: {
     flexDirection: 'row',
     gap: 12,
+  },
+  requestActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 12,
+  },
+  requestAcceptButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#2563EB',
+  },
+  requestAcceptText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  requestDeclineButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#EF4444',
+  },
+  requestDeclineText: {
+    color: '#EF4444',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  declineModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  declineModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 420,
+  },
+  declineModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 12,
+  },
+  declineModalMessage: {
+    fontSize: 15,
+    color: '#64748B',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  declineModalButtonRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  declineModalCancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  declineModalConfirmButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#EF4444',
+  },
+  declineModalButtonDisabled: {
+    opacity: 0.7,
+  },
+  declineModalCancelText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  declineModalConfirmText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   declineButton: {
     flex: 1,
