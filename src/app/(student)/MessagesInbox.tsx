@@ -348,8 +348,9 @@ export default function MessagesInboxScreen() {
 
                   <View style={styles.tagStatusRow}>
                     {conv.subject ? (
-                      <View style={styles.subjectTag}>
-                        <Text style={styles.subjectTagText}>{conv.subject}</Text>
+                      <View style={styles.subjectOutlineRow}>
+                        <View style={styles.subjectOutlineDot} />
+                        <Text style={styles.subjectTagText} numberOfLines={1}>{conv.subject}</Text>
                       </View>
                     ) : null}
                   </View>
@@ -700,16 +701,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 4,
   },
-  subjectTag: {
-    backgroundColor: "#EFF6FF",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+  subjectOutlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    minWidth: 0,
+  },
+  subjectOutlineDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+    marginRight: 8,
   },
   subjectTagText: {
-    fontSize: 11,
-    color: "#2563EB",
-    fontWeight: "600",
+    flex: 1,
+    fontSize: 12,
+    color: "#334155",
+    fontWeight: "500",
   },
   lastMessageRow: {
     flexDirection: "row",

@@ -649,25 +649,19 @@ export default function UserProfileScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Subject Pills */}
-          <View style={styles.pillsWrap}>
+          {/* Subject list */}
+          <View style={styles.subjectList}>
             {activeSubjects.length === 0 ? (
-              <Text style={styles.subjectPillText}>No active subjects</Text>
+              <Text style={styles.subjectListText}>No active subjects</Text>
             ) : activeSubjects.map((subject) => (
-              <View
-                key={subject.id}
-                style={[
-                  styles.subjectPill,
-                  { backgroundColor: subject.bgColor },
-                ]}
-              >
+              <View key={subject.id} style={styles.subjectListItem}>
                 <View
                   style={[
-                    styles.pillDot,
+                    styles.subjectBullet,
                     { backgroundColor: subject.dotColor },
                   ]}
                 />
-                <Text style={styles.subjectPillText}>{subject.name}</Text>
+                <Text style={styles.subjectListText}>{subject.name}</Text>
               </View>
             ))}
           </View>
@@ -1524,28 +1518,26 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#2563EB",
   },
-  pillsWrap: {
+  subjectList: {
+    marginTop: 4,
+  },
+  subjectListItem: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 12,
+    alignItems: "flex-start",
+    marginBottom: 8,
   },
-  subjectPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
+  subjectBullet: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    marginTop: 6,
+    marginRight: 10,
   },
-  pillDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  subjectPillText: {
-    fontSize: 12,
-    fontWeight: "600",
+  subjectListText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "500",
     color: "#1E293B",
   },
   subSectionTitle: {
