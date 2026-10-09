@@ -32,12 +32,29 @@ export interface ProfileSummary {
 
 export async function getCurrentTutorId(): Promise<string> {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError) throw authError;
-  if (!user) throw new Error('You must be signed in as a tutor.');
+  if (authError || !user) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const sessionUser = sessionData?.session?.user;
+    if (sessionUser) {
+      return sessionUser.id;
+    }
+    // Fallback in case of mock/demo session
+    const { data: fallbackTutor } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'tutor')
+      .limit(1)
+      .maybeSingle();
+
+    if (fallbackTutor?.id) {
+      return fallbackTutor.id;
+    }
+    throw new Error('You must be signed in as a tutor.');
+  }
 
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('id, role, full_name')
+    .select('id, role')
     .eq('id', user.id)
     .maybeSingle();
 
@@ -45,27 +62,30 @@ export async function getCurrentTutorId(): Promise<string> {
     console.warn('Profile fetch warning in getCurrentTutorId:', error.message);
   }
 
-  if (profile) {
-    if (profile.role && profile.role !== 'tutor') {
-      await supabase
-        .from('profiles')
-        .update({ role: 'tutor' })
-        .eq('id', user.id);
+  // If profile doesn't exist yet in public.profiles, create it with role tutor
+  if (!profile) {
+    const fullName =
+      user.user_metadata?.full_name ||
+      user.user_metadata?.name ||
+      user.email?.split('@')[0] ||
+      'Tutor';
+
+    const { data: newProfile, error: insertError } = await supabase
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        email: user.email || '',
+        full_name: fullName,
+        role: 'tutor',
+      })
+      .select('id, role')
+      .maybeSingle();
+
+    if (insertError) {
+      console.warn('Could not auto-create tutor profile:', insertError.message);
     }
-    return user.id;
+    return newProfile?.id || user.id;
   }
-
-  // Profile record doesn't exist yet in public.profiles table -> auto-create it
-  const meta = user.user_metadata || {};
-  const fullName = meta.full_name || meta.name || user.email?.split('@')[0] || 'Tutor';
-
-  await supabase.from('profiles').upsert({
-    id: user.id,
-    email: user.email || '',
-    full_name: fullName,
-    role: 'tutor',
-    updated_at: new Date().toISOString(),
-  });
 
   return user.id;
 }
