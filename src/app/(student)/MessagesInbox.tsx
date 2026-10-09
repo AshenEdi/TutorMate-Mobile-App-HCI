@@ -191,7 +191,7 @@ export default function MessagesInboxScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP HEADER BAR --- */}
-      <StudentHeader />
+      <StudentHeader title="Messages" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

@@ -464,7 +464,7 @@ export default function UserProfileScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP BRAND BAR --- */}
-      <StudentHeader />
+      <StudentHeader title="Profile" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

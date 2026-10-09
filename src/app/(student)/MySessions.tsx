@@ -227,7 +227,7 @@ Booking Ref: ${session.bookingRef || "—"}${disputeInfo}
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP BRAND BAR --- */}
-      <StudentHeader />
+      <StudentHeader title="Sessions" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

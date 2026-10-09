@@ -489,7 +489,7 @@ export default function TutorSearchScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP NAVBAR --- */}
-      <StudentHeader />
+      <StudentHeader title="Search" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

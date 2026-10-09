@@ -185,7 +185,7 @@ export default function StudentHomeScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP HEADER --- */}
-      <StudentHeader />
+      <StudentHeader title="Home" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
