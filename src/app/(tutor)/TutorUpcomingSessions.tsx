@@ -111,7 +111,7 @@ export default function TutorUpcomingSessionsScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
 
       {/* --- Top Header Navigation --- */}
-      <TutorHeader />
+      <TutorHeader title="Sessions" />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}

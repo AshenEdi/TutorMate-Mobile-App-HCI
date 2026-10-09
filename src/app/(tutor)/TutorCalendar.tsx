@@ -312,7 +312,7 @@ export default function ManageScheduleScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      <TutorHeader />
+      <TutorHeader title="Calendar" />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}

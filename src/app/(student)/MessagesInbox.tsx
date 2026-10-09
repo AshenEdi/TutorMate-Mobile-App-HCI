@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
+import { StudentHeader } from "../../components/StudentHeader";
 import {
   ActivityIndicator,
   Image,
@@ -190,23 +191,7 @@ export default function MessagesInboxScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP HEADER BAR --- */}
-      <View style={styles.topBar}>
-        <View style={styles.brandContainer}>
-          <View style={styles.brandIcon}>
-            <Ionicons name="book" size={20} color="#FFFFFF" />
-          </View>
-          <View>
-            <Text style={styles.brandName}>TutorMate</Text>
-            <Text style={styles.brandTitle}>Messages Inbox</Text>
-          </View>
-        </View>
-        <TouchableOpacity
-          style={styles.bellBtn}
-          onPress={() => router.push("/notification" as any)}
-        >
-          <Ionicons name="notifications-outline" size={20} color="#64748B" />
-        </TouchableOpacity>
-      </View>
+      <StudentHeader title="Messages" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -348,8 +333,9 @@ export default function MessagesInboxScreen() {
 
                   <View style={styles.tagStatusRow}>
                     {conv.subject ? (
-                      <View style={styles.subjectTag}>
-                        <Text style={styles.subjectTagText}>{conv.subject}</Text>
+                      <View style={styles.subjectOutlineRow}>
+                        <View style={styles.subjectOutlineDot} />
+                        <Text style={styles.subjectTagText} numberOfLines={1}>{conv.subject}</Text>
                       </View>
                     ) : null}
                   </View>
@@ -700,16 +686,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 4,
   },
-  subjectTag: {
-    backgroundColor: "#EFF6FF",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+  subjectOutlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    minWidth: 0,
+  },
+  subjectOutlineDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+    marginRight: 8,
   },
   subjectTagText: {
-    fontSize: 11,
-    color: "#2563EB",
-    fontWeight: "600",
+    flex: 1,
+    fontSize: 12,
+    color: "#334155",
+    fontWeight: "500",
   },
   lastMessageRow: {
     flexDirection: "row",
