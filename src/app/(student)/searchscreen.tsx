@@ -1,5 +1,6 @@
 import { FontAwesome5, Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { StudentHeader } from "../../components/StudentHeader";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
@@ -488,25 +489,7 @@ export default function TutorSearchScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP NAVBAR --- */}
-      <View style={styles.topBar}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.push("/(student)/dashboard")}
-        >
-          <Ionicons name="arrow-back" size={20} color="#0F172A" />
-        </TouchableOpacity>
-
-        <View style={styles.brandIcon}>
-          <Ionicons name="book" size={18} color="#FFFFFF" />
-        </View>
-
-        <TouchableOpacity
-          style={styles.profileButton}
-          onPress={() => router.push("/(student)/StudentProfile")}
-        >
-          <Ionicons name="person" size={18} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
+      <StudentHeader title="Search" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

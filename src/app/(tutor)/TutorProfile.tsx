@@ -93,7 +93,7 @@ export default function TutorProfileDetailsScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
 
-      <TutorHeader />
+      <TutorHeader title="Profile" />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}

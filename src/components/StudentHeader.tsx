@@ -4,11 +4,11 @@ import React from 'react';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { NotificationPopover } from './NotificationPopover';
 
-interface TutorHeaderProps {
+interface StudentHeaderProps {
   title?: string;
 }
 
-export function TutorHeader({ title }: TutorHeaderProps) {
+export function StudentHeader({ title }: StudentHeaderProps) {
   const router = useRouter();
 
   return (
@@ -31,7 +31,7 @@ export function TutorHeader({ title }: TutorHeaderProps) {
         <TouchableOpacity
           activeOpacity={0.7}
           style={styles.headerProfileBtn}
-          onPress={() => router.push('/(tutor)/TutorProfile')}
+          onPress={() => router.push('/(student)/StudentProfile')}
         >
           <Ionicons name="person" size={20} color="#FFFFFF" />
         </TouchableOpacity>

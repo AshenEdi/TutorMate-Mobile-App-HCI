@@ -176,7 +176,7 @@ export default function TutorPastSessionsScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
 
       {/* --- Top Global Header --- */}
-      <TutorHeader />
+      <TutorHeader title="Sessions" />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}

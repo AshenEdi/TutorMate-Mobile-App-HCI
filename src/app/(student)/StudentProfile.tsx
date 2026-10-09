@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
+import { StudentHeader } from "../../components/StudentHeader";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../../lib/supabase";
 import { AlertModal, AlertType } from "../../components/ui/AlertModal";
@@ -463,24 +464,7 @@ export default function UserProfileScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP BRAND BAR --- */}
-      <View style={styles.topBar}>
-        <View style={styles.brandContainer}>
-          <View style={styles.brandIcon}>
-            <Ionicons name="book" size={18} color="#FFFFFF" />
-          </View>
-          <View>
-            <Text style={styles.brandName}>TutorMate</Text>
-            <Text style={styles.brandTitle}>Profile</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity
-          style={styles.bellBtn}
-          onPress={() => router.push("/notification")}
-        >
-          <Ionicons name="notifications-outline" size={20} color="#1E293B" />
-        </TouchableOpacity>
-      </View>
+      <StudentHeader title="Profile" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

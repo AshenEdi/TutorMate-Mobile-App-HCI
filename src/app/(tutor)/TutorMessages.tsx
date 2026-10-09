@@ -312,7 +312,7 @@ export default function TutorMessagesScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- BRAND TOP NAVBAR --- */}
-      <TutorHeader />
+      <TutorHeader title="Messages" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
