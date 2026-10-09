@@ -10,100 +10,34 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from "react-native";
-import { getNotifications, markAllNotificationsAsRead } from "../services/notificationService";
+import { markAllNotificationsAsRead } from "../services/notificationService";
 import { supabase } from "../../lib/supabase";
 
 // --- TYPES ---
 interface NotificationItem {
   id: string;
-  type: "session" | "message" | "wallet" | "booking" | "material" | "review";
+  type: string;
   title: string;
-  timestamp: string;
   description: string;
-  highlightText?: string;
-  isUnread: boolean;
-  timeGroup: "TODAY" | "YESTERDAY" | "EARLIER THIS WEEK";
-  category: "Sessions" | "Messages" | "Reminders";
+  highlight_text?: string;
+  is_unread: boolean;
+  category: string;
+  reference_id?: string;
+  created_at: string;
+  
+  // Computed fields for UI
+  timestamp?: string;
+  timeGroup?: "TODAY" | "YESTERDAY" | "EARLIER THIS WEEK";
   rating?: number;
 }
 
-// --- MOCK DATA ---
-const NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: "1",
-    type: "session",
-    title: "Session starts in 30 mins",
-    timestamp: "30m ago",
-    description:
-      "Dr. Sarah Jenkins is waiting in the digital whiteboard room for AP Calculus BC.",
-    isUnread: true,
-    timeGroup: "TODAY",
-    category: "Sessions",
-  },
-  {
-    id: "2",
-    type: "message",
-    title: "New Message • Marcus Vance",
-    timestamp: "2h ago",
-    description:
-      '"Let\'s review problem 5 together before our Thursday workshop!"',
-    isUnread: true,
-    timeGroup: "TODAY",
-    category: "Messages",
-  },
-  {
-    id: "3",
-    type: "wallet",
-    title: "Auto-Reload Successful",
-    timestamp: "4h ago",
-    description:
-      "$50.00 deposited into your Student Wallet balance. New balance: $85.50.",
-    isUnread: true,
-    timeGroup: "TODAY",
-    category: "Reminders",
-  },
-  {
-    id: "4",
-    type: "booking",
-    title: "Booking Confirmed",
-    timestamp: "1d ago",
-    description:
-      "Elena Rostova confirmed your Organic Chemistry II session for Friday, Mar 20 at 4:00 PM.",
-    isUnread: false,
-    timeGroup: "YESTERDAY",
-    category: "Sessions",
-  },
-  {
-    id: "5",
-    type: "material",
-    title: "New Study Material",
-    timestamp: "1d ago",
-    description:
-      "Dr. Sarah Jenkins uploaded polar_series_cheat_sheet.pdf to your shared binder.",
-    isUnread: false,
-    timeGroup: "YESTERDAY",
-    category: "Reminders",
-  },
-  {
-    id: "6",
-    type: "review",
-    title: "Rate Your Session",
-    timestamp: "3d ago",
-    description:
-      "How was your SAT Math prep with David Kim? Help keep TutorMate verified and helpful.",
-    isUnread: false,
-    timeGroup: "EARLIER THIS WEEK",
-    category: "Reminders",
-    rating: 4,
-  },
-];
-
 const FILTER_TABS = [
-  { id: "all", label: "All (12)" },
-  { id: "sessions", label: "Sessions (4)" },
-  { id: "messages", label: "Messages (5)" },
-  { id: "reminders", label: "Reminders (3)" },
+  { id: "all", label: "All" },
+  { id: "sessions", label: "Sessions" },
+  { id: "messages", label: "Messages" },
+  { id: "reminders", label: "Reminders" },
 ];
 
 const STUDENT_NAV_TABS = [
@@ -117,41 +51,113 @@ const STUDENT_NAV_TABS = [
 export default function NotificationsScreen() {
   const router = useRouter();
   const [selectedTab, setSelectedTab] = useState("all");
-  const [notificationsList, setNotificationsList] = useState<NotificationItem[]>(NOTIFICATIONS);
+  const [notificationsList, setNotificationsList] = useState<NotificationItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchNotifications = async () => {
+    try {
+      setIsLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      
+      // Process data for UI
+      const processedData = (data || []).map((item: any) => {
+        const date = new Date(item.created_at);
+        const now = new Date();
+        const diffMs = now.getTime() - date.getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffMins = Math.floor(diffMs / (1000 * 60));
+
+        let timestamp = "";
+        let timeGroup: "TODAY" | "YESTERDAY" | "EARLIER THIS WEEK" = "EARLIER THIS WEEK";
+
+        if (diffDays === 0) {
+          timeGroup = "TODAY";
+          timestamp = diffHours > 0 ? `${diffHours}h ago` : `${diffMins}m ago`;
+        } else if (diffDays === 1) {
+          timeGroup = "YESTERDAY";
+          timestamp = "1d ago";
+        } else {
+          timeGroup = "EARLIER THIS WEEK";
+          timestamp = `${diffDays}d ago`;
+        }
+
+        const normalizedType =
+          item.type === "dispute"
+            ? "session"
+            : item.type === "moderation"
+            ? "message"
+            : item.type;
+
+        return {
+          ...item,
+          type: normalizedType,
+          timestamp,
+          timeGroup,
+        };
+      });
+
+      setNotificationsList(processedData);
+    } catch (err) {
+      console.error("Error fetching notifications:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function loadRealNotifications() {
-      try {
-        const liveItems = await getNotifications();
-        if (liveItems.length > 0) {
-          const mapped: NotificationItem[] = liveItems.map((n) => ({
-            id: n.id,
-            type: n.type === 'dispute' ? 'session' : n.type === 'moderation' ? 'message' : (n.type as any),
-            title: n.title,
-            timestamp: "Just now",
-            description: n.description,
-            highlightText: n.highlight_text,
-            isUnread: n.is_unread,
-            timeGroup: "TODAY",
-            category: n.category || "Reminders",
-          }));
+    let channel: any;
 
-          setNotificationsList([...mapped, ...NOTIFICATIONS]);
-        }
-      } catch (err) {
-        console.warn("Error fetching real notifications:", err);
+    const setupRealtime = async () => {
+      await fetchNotifications();
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const channelName = `notifications_screen_${Date.now()}`;
+      channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter: `user_id=eq.${user.id}`,
+          },
+          (payload: any) => {
+            console.log('New notification received:', payload);
+            fetchNotifications(); // Refresh the list
+          }
+        )
+        .subscribe();
+    };
+
+    setupRealtime();
+
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
       }
-    }
-    void loadRealNotifications();
+    };
   }, []);
 
   const handleMarkAllRead = async () => {
     setNotificationsList((prev) =>
-      prev.map((item) => ({ ...item, isUnread: false })),
+      prev.map((item: NotificationItem) => ({ ...item, is_unread: false })),
     );
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-      void markAllNotificationsAsRead(user.id);
+      await markAllNotificationsAsRead(user.id);
     }
   };
 
@@ -159,7 +165,28 @@ export default function NotificationsScreen() {
     groupName: "TODAY" | "YESTERDAY" | "EARLIER THIS WEEK",
     subtitle?: string,
   ) => {
-    const items = notificationsList.filter((n) => n.timeGroup === groupName);
+    const items = notificationsList.filter((n) => {
+      if (n.timeGroup !== groupName) return false;
+      if (selectedTab === "all") return true;
+      if (selectedTab === "sessions")
+        return (
+          n.category?.toLowerCase() === "sessions" ||
+          n.type === "session" ||
+          n.type === "booking"
+        );
+      if (selectedTab === "messages")
+        return (
+          n.category?.toLowerCase() === "messages" || n.type === "message"
+        );
+      if (selectedTab === "reminders")
+        return (
+          n.category?.toLowerCase() === "reminders" ||
+          n.type === "wallet" ||
+          n.type === "material" ||
+          n.type === "review"
+        );
+      return true;
+    });
     if (items.length === 0) return null;
 
     return (
@@ -205,7 +232,7 @@ export default function NotificationsScreen() {
                   )}
                 </View>
 
-                {item.isUnread && <View style={styles.unreadDot} />}
+                {item.is_unread && <View style={styles.unreadDot} />}
               </View>
 
               {/* Text Info */}
@@ -415,6 +442,9 @@ export default function NotificationsScreen() {
         </ScrollView>
 
         {/* --- NOTIFICATION GROUPS --- */}
+        {isLoading ? (
+          <ActivityIndicator size="small" color="#2563EB" style={{ marginVertical: 20 }} />
+        ) : null}
         {renderTimeGroup("TODAY", "3 unread")}
         {renderTimeGroup("YESTERDAY", "Read")}
         {renderTimeGroup("EARLIER THIS WEEK")}

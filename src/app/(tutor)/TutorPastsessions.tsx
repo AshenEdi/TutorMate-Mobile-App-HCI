@@ -20,6 +20,7 @@ import {
     View,
 } from 'react-native';
 import { TutorBottomNav } from '../../components/TutorBottomNav';
+import { TutorHeader } from '../../components/TutorHeader';
 import {
   formatBookingDate,
   getCurrentTutorId,
@@ -175,33 +176,7 @@ export default function TutorPastSessionsScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
 
       {/* --- Top Global Header --- */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          activeOpacity={0.7} 
-          style={styles.headerBackBtn}
-          onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace("/(tutor)/dashboard");
-            }
-          }}
-        >
-          <Ionicons name="arrow-back" size={24} color="#0F172A" />
-        </TouchableOpacity>
-
-        <View style={styles.headerCenterBrand}>
-          <Ionicons name="book" size={20} color="#FFFFFF" />
-        </View>
-
-        <TouchableOpacity 
-          activeOpacity={0.7} 
-          style={styles.headerProfileBtn}
-          onPress={() => router.push("/(tutor)/TutorProfile")}
-        >
-          <Ionicons name="person" size={20} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
+      <TutorHeader />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
