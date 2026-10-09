@@ -161,7 +161,7 @@ export default function TutorBookingScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
 
-      <TutorHeader />
+      <TutorHeader title="Home" />
 
       <ScrollView
         contentContainerStyle={styles.scrollContainer}

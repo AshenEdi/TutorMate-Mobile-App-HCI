@@ -4,7 +4,11 @@ import React from 'react';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { NotificationPopover } from './NotificationPopover';
 
-export function TutorHeader() {
+interface TutorHeaderProps {
+  title?: string;
+}
+
+export function TutorHeader({ title }: TutorHeaderProps) {
   const router = useRouter();
 
   return (
@@ -13,10 +17,16 @@ export function TutorHeader() {
         <View style={styles.brandIcon}>
           <Ionicons name="book" size={18} color="#FFFFFF" />
         </View>
-        <Text style={styles.brandTitle}>TutorMate</Text>
+        {!title && <Text style={styles.brandTitle}>TutorMate</Text>}
       </View>
 
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {title && (
+        <View style={styles.centerTitleContainer}>
+          <Text style={styles.centerTitleText}>{title}</Text>
+        </View>
+      )}
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', zIndex: 20 }}>
         <NotificationPopover />
         <TouchableOpacity
           activeOpacity={0.7}
@@ -39,10 +49,12 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'android' ? 14 : 8,
     paddingBottom: 10,
     backgroundColor: '#F8FAFC',
+    position: 'relative',
   },
   brandContainer: {
     flexDirection: "row",
     alignItems: "center",
+    zIndex: 20,
   },
   brandIcon: {
     width: 32,
@@ -51,11 +63,27 @@ const styles = StyleSheet.create({
     backgroundColor: "#2563EB",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 10,
   },
   brandTitle: {
     fontSize: 18,
     fontWeight: "800",
+    color: "#0F172A",
+    marginLeft: 10,
+  },
+  centerTitleContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 10,
+    top: Platform.OS === 'android' ? 14 : 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    pointerEvents: 'none',
+  },
+  centerTitleText: {
+    fontSize: 18,
+    fontWeight: "700",
     color: "#0F172A",
   },
   headerProfileBtn: {
