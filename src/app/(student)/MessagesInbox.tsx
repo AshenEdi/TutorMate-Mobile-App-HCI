@@ -1,71 +1,68 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-    Image,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-    ActivityIndicator,
+  ActivityIndicator,
+  Image,
+  Platform,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { supabase } from "../../../lib/supabase";
-
-// --- MOCK DATA FOR QUICK CONNECT ---
-const QUICK_CONNECT = [
-  { id: "1", name: "Dr. Sarah", avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop" },
-  { id: "2", name: "Marcus", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop" },
-  { id: "3", name: "Elena", avatar: "https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=200&auto=format&fit=crop" },
-  { id: "4", name: "David K.", avatar: "https://images.unsplash.com/photo-1560250097-0b93528c311a?q=80&w=200&auto=format&fit=crop" },
-];
 
 export default function MessagesInboxScreen() {
   const router = useRouter();
   const [conversations, setConversations] = useState<any[]>([]);
-  const [quickTutors, setQuickTutors] = useState<any[]>(QUICK_CONNECT);
+  const [quickTutors, setQuickTutors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<"all" | "unread" | "active">("all");
 
   const fetchInbox = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      
+      if (!user) {
+        setConversations([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
       // Fetch user's conversations
       const { data: convs, error: convsError } = await supabase
         .from("conversations")
         .select("*")
-        .eq("student_id", user.id)
+        .or(`student_id.eq.${user.id},tutor_id.eq.${user.id}`)
         .order("updated_at", { ascending: false });
 
       if (convsError) {
         console.warn("[MessagesInbox] Error fetching conversations:", convsError.message);
       }
-        
+
       if (!convs || convs.length === 0) {
         setConversations([]);
-        setLoading(false);
       } else {
-        // Fetch tutor profiles safely using select('*')
-        const tutorIds = convs.map((c: any) => c.tutor_id);
-        const { data: profiles, error: profError } = await supabase
+        // Find other participants
+        const otherUserIds = convs.map((c: any) =>
+          c.student_id === user.id ? c.tutor_id : c.student_id
+        ).filter(Boolean);
+
+        const { data: profiles } = await supabase
           .from("profiles")
           .select("*")
-          .in("id", tutorIds);
-          
-        if (profError) {
-          console.warn("[MessagesInbox] Error fetching profiles:", profError.message);
-        }
-          
+          .in("id", otherUserIds);
+
         const profileMap: Record<string, any> = {};
         profiles?.forEach((p: any) => { profileMap[p.id] = p; });
-        
+
         // Fetch unread counts (where user is NOT the sender)
         const { data: unreadCounts } = await supabase
           .from("messages")
@@ -73,72 +70,66 @@ export default function MessagesInboxScreen() {
           .eq("is_read", false)
           .neq("sender_id", user.id)
           .in("conversation_id", convs.map((c: any) => c.id));
-          
+
         const unreadMap: Record<string, number> = {};
         unreadCounts?.forEach((m: any) => {
           unreadMap[m.conversation_id] = (unreadMap[m.conversation_id] || 0) + 1;
         });
 
         const mapped = convs.map((c: any) => {
-          const tutor = profileMap[c.tutor_id] || {};
-          const tutorName = tutor.full_name || tutor.name || (tutor.email ? tutor.email.split('@')[0] : "Tutor");
+          const otherId = c.student_id === user.id ? c.tutor_id : c.student_id;
+          const otherProf = profileMap[otherId] || {};
+          const displayName = otherProf.full_name || otherProf.name || (otherProf.email ? otherProf.email.split('@')[0] : "Tutor");
           const unreadCount = unreadMap[c.id] || 0;
-          
+
           return {
             id: c.id,
-            tutorId: c.tutor_id,
-            name: tutorName,
-            avatar: tutor.avatar_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
+            tutorId: otherId,
+            name: displayName,
+            avatar: otherProf.avatar_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
             verified: true,
-            online: true, 
-            time: new Date(c.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            subject: tutor.specialty || (Array.isArray(tutor.subjects) ? tutor.subjects.join(', ') : tutor.subjects) || "Tutoring Session", 
+            online: true,
+            time: c.updated_at
+              ? new Date(c.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : "",
+            subject: otherProf.specialty || (Array.isArray(otherProf.subjects) ? otherProf.subjects.join(', ') : otherProf.subjects) || "Tutoring Session",
             lastMessage: c.last_message || "Started a conversation...",
             unread: unreadCount,
           };
         });
-        
+
         setConversations(mapped);
-        setLoading(false);
       }
 
-      // Also fetch directory tutors for Quick Connect
+      // Fetch directory tutors for Quick Connect
       const { data: dbTutors } = await supabase
         .from("profiles")
-        .select("*")
+        .select("id, full_name, avatar_url, role")
+        .eq("role", "tutor")
         .neq("id", user.id)
         .limit(10);
 
       if (dbTutors && dbTutors.length > 0) {
-        const filtered = dbTutors
-          .filter((p: any) => !p.role || p.role.toLowerCase() === 'tutor' || p.role.toLowerCase() !== 'student')
-          .map((p: any) => ({
+        setQuickTutors(
+          dbTutors.map((p: any) => ({
             id: p.id,
-            name: p.full_name || p.name || (p.email ? p.email.split('@')[0] : "Tutor"),
+            name: p.full_name || "Tutor",
             avatar: p.avatar_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop",
-          }));
-        if (filtered.length > 0) {
-          setQuickTutors(filtered);
-        }
+          }))
+        );
       }
     } catch (err) {
       console.warn("Failed to fetch inbox:", err);
+    } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
     let isMounted = true;
+    fetchInbox();
 
-    async function loadData() {
-      if (isMounted) {
-        await fetchInbox();
-      }
-    }
-
-    loadData();
-
-    // Subscribe to conversations changes to auto-update inbox
     const channelName = `student_inbox_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const convChannel = supabase
       .channel(channelName)
@@ -157,52 +148,75 @@ export default function MessagesInboxScreen() {
     };
   }, [fetchInbox]);
 
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchInbox();
+  };
+
   const handleMarkAllRead = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || conversations.length === 0) return;
-      const convIds = conversations.map(c => c.id);
+      const convIds = conversations.map((c) => c.id);
       await supabase
         .from("messages")
         .update({ is_read: true })
         .in("conversation_id", convIds)
         .neq("sender_id", user.id)
         .eq("is_read", false);
-      setConversations(prev => prev.map(c => ({ ...c, unread: 0 })));
+      setConversations((prev) => prev.map((c) => ({ ...c, unread: 0 })));
     } catch (e) {
       console.warn("Failed to mark all read:", e);
     }
   };
 
+  const totalUnread = conversations.reduce((acc, c) => acc + (c.unread || 0), 0);
+
+  const filteredConversations = conversations.filter((c) => {
+    if (activeFilter === "unread") return c.unread > 0;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      return (
+        c.name.toLowerCase().includes(q) ||
+        (c.lastMessage && c.lastMessage.toLowerCase().includes(q)) ||
+        (c.subject && c.subject.toLowerCase().includes(q))
+      );
+    }
+    return true;
+  });
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* --- TOP BRAND BAR --- */}
+      {/* --- TOP HEADER BAR --- */}
       <View style={styles.topBar}>
         <View style={styles.brandContainer}>
           <View style={styles.brandIcon}>
-            <Ionicons name="book" size={18} color="#FFFFFF" />
+            <Ionicons name="book" size={20} color="#FFFFFF" />
           </View>
           <View>
             <Text style={styles.brandName}>TutorMate</Text>
             <Text style={styles.brandTitle}>Messages Inbox</Text>
           </View>
         </View>
-
-        <TouchableOpacity 
-        style={styles.bellBtn}
-        onPress={() => router.push("/notification")}
-      >
-          <Ionicons name="notifications-outline" size={20} color="#1E293B" />
+        <TouchableOpacity
+          style={styles.bellBtn}
+          onPress={() => router.push("/notification" as any)}
+        >
+          <Ionicons name="notifications-outline" size={20} color="#64748B" />
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={["#2563EB"]} />}
+      >
         {/* --- SEARCH BAR --- */}
         <View style={styles.searchRow}>
           <View style={styles.searchContainer}>
-            <Ionicons name="search-outline" size={20} color="#64748B" style={styles.searchIcon} />
+            <Ionicons name="search-outline" size={20} color="#94A3B8" style={styles.searchIcon} />
             <TextInput
               style={styles.searchInput}
               placeholder="Search messages or tutors..."
@@ -210,18 +224,23 @@ export default function MessagesInboxScreen() {
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery("")}>
+                <Ionicons name="close-circle" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
           </View>
           <TouchableOpacity
             style={styles.composeBtn}
             onPress={() => router.push("/(student)/NewMessage")}
           >
-            <Ionicons name="create-outline" size={24} color="#FFFFFF" />
+            <Ionicons name="create-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
         {/* --- FILTER TABS --- */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterTabs}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.filterTab, activeFilter === "all" && styles.filterTabActive]}
             onPress={() => setActiveFilter("all")}
           >
@@ -229,146 +248,175 @@ export default function MessagesInboxScreen() {
               All ({conversations.length})
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={[styles.filterTab, activeFilter === "unread" && styles.filterTabActive]}
             onPress={() => setActiveFilter("unread")}
           >
             <Text style={[styles.filterTabText, activeFilter === "unread" && styles.filterTabTextActive]}>
-              Unread ({conversations.filter(c => c.unread > 0).length})
+              Unread ({totalUnread})
             </Text>
-            {conversations.some(c => c.unread > 0) && <View style={styles.unreadDotSmall} />}
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.filterTab, activeFilter === "active" && styles.filterTabActive]}
-            onPress={() => setActiveFilter("active")}
-          >
-            <Ionicons name="checkmark-circle-outline" size={16} color={activeFilter === "active" ? "#2563EB" : "#64748B"} style={{ marginRight: 4 }} />
-            <Text style={[styles.filterTabText, activeFilter === "active" && styles.filterTabTextActive]}>Active Tutors</Text>
+            {totalUnread > 0 && <View style={styles.unreadDotSmall} />}
           </TouchableOpacity>
         </ScrollView>
 
         {/* --- QUICK CONNECT --- */}
-        <View style={styles.sectionHeader}>
-          <View style={styles.quickConnectTitle}>
-            <View style={styles.greenDot} />
-            <Text style={styles.sectionTitle}>Quick Connect</Text>
-          </View>
-          <Text style={styles.sectionSubtitle}>Verified Tutors</Text>
-        </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickConnectScroll}>
-          {quickTutors.map((tutor) => (
-            <TouchableOpacity 
-              key={tutor.id} 
-              style={styles.quickTutor}
-              onPress={() => router.push("/(student)/NewMessage")}
-            >
-              <View style={styles.avatarWrapper}>
-                <Image source={{ uri: tutor.avatar }} style={styles.quickAvatar} />
-                <View style={styles.onlineBadge} />
+        {quickTutors.length > 0 && (
+          <>
+            <View style={styles.sectionHeader}>
+              <View style={styles.quickConnectTitle}>
+                <View style={styles.greenDot} />
+                <Text style={styles.sectionTitle}>Quick Connect</Text>
               </View>
-              <Text style={styles.quickName} numberOfLines={1}>{tutor.name}</Text>
-            </TouchableOpacity>
-          ))}
-          <TouchableOpacity 
-            style={styles.quickTutor}
-            onPress={() => router.push("/(student)/NewMessage")}
-          >
-            <View style={styles.newRoomBtn}>
-              <Ionicons name="person-add-outline" size={24} color="#2563EB" />
+              <Text style={styles.sectionSubtitle}>Verified Tutors</Text>
             </View>
-            <Text style={styles.quickName}>New Chat</Text>
-          </TouchableOpacity>
-        </ScrollView>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickConnectScroll}>
+              {quickTutors.map((tutor) => (
+                <TouchableOpacity
+                  key={tutor.id}
+                  style={styles.quickTutor}
+                  onPress={() => router.push("/(student)/NewMessage")}
+                >
+                  <View style={styles.avatarWrapper}>
+                    <Image source={{ uri: tutor.avatar }} style={styles.quickAvatar} />
+                    <View style={styles.onlineBadge} />
+                  </View>
+                  <Text style={styles.quickName} numberOfLines={1}>{tutor.name}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={styles.quickTutor}
+                onPress={() => router.push("/(student)/NewMessage")}
+              >
+                <View style={styles.newRoomBtn}>
+                  <Ionicons name="person-add-outline" size={24} color="#2563EB" />
+                </View>
+                <Text style={styles.quickName}>New Chat</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </>
+        )}
 
         {/* --- RECENT CONVERSATIONS --- */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionHeaderTitle}>RECENT CONVERSATIONS</Text>
-          <TouchableOpacity onPress={handleMarkAllRead}>
-            <Text style={styles.markReadLink}>Mark all read</Text>
-          </TouchableOpacity>
+          {totalUnread > 0 && (
+            <TouchableOpacity onPress={handleMarkAllRead}>
+              <Text style={styles.markReadLink}>Mark all read</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        <View style={styles.conversationsList}>
-          {loading && (
-            <View style={{ padding: 20, alignItems: 'center' }}>
-              <ActivityIndicator size="small" color="#2563EB" />
-            </View>
-          )}
-          {!loading && conversations.length === 0 && (
-            <View style={{ padding: 20, alignItems: 'center' }}>
-              <Text style={{ color: '#94A3B8' }}>No conversations yet.</Text>
-            </View>
-          )}
-          {conversations
-            .filter((c) => {
-              if (activeFilter === "unread") return c.unread > 0;
-              if (searchQuery.trim()) {
-                const q = searchQuery.toLowerCase();
-                return c.name.toLowerCase().includes(q) || c.lastMessage.toLowerCase().includes(q);
-              }
-              return true;
-            })
-            .map((conv) => (
-            <TouchableOpacity 
-              key={conv.id} 
-              style={styles.conversationCard}
-              onPress={() => router.push({
-                pathname: "/(student)/ChatConversation",
-                params: { conversationId: conv.id }
-              })}
-            >
-              <View style={styles.convAvatarWrapper}>
-                {conv.isGroup ? (
-                  <View style={styles.groupIconBg}>
-                    <Ionicons name="calculator-outline" size={24} color="#2563EB" />
-                  </View>
-                ) : (
+        {loading ? (
+          <View style={{ paddingVertical: 40, alignItems: "center" }}>
+            <ActivityIndicator size="large" color="#2563EB" />
+            <Text style={{ marginTop: 12, color: "#64748B", fontSize: 13 }}>
+              Loading messages...
+            </Text>
+          </View>
+        ) : filteredConversations.length > 0 ? (
+          <View style={styles.conversationsList}>
+            {filteredConversations.map((conv) => (
+              <TouchableOpacity
+                key={conv.id}
+                style={styles.conversationCard}
+                onPress={() => router.push({
+                  pathname: "/(student)/ChatConversation",
+                  params: {
+                    conversationId: conv.id,
+                    otherUserId: conv.tutorId,
+                    tutorId: conv.tutorId,
+                  },
+                })}
+              >
+                <View style={styles.convAvatarWrapper}>
                   <Image source={{ uri: conv.avatar }} style={styles.convAvatar} />
-                )}
-                {conv.online && <View style={styles.onlineBadge} />}
-                {!conv.online && conv.isGroup && <View style={[styles.onlineBadge, { backgroundColor: '#CBD5E1' }]} />}
-              </View>
-
-              <View style={styles.convContent}>
-                <View style={styles.convTopRow}>
-                  <View style={styles.nameVerifiedRow}>
-                    <Text style={styles.convName}>{conv.name}</Text>
-                    {conv.verified && <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginLeft: 4 }} />}
-                  </View>
-                  <Text style={styles.convTime}>{conv.time}</Text>
+                  {conv.online && <View style={styles.onlineBadge} />}
                 </View>
 
-                <View style={styles.tagStatusRow}>
-                  <View style={styles.subjectTag}>
-                    <Text style={styles.subjectTagText}>{conv.subject}</Text>
+                <View style={styles.convContent}>
+                  <View style={styles.convTopRow}>
+                    <View style={styles.nameVerifiedRow}>
+                      <Text style={styles.convName}>{conv.name}</Text>
+                      {conv.verified && (
+                        <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginLeft: 4 }} />
+                      )}
+                    </View>
+                    <Text style={styles.convTime}>{conv.time}</Text>
                   </View>
-                  {conv.status && (
-                    <Text style={styles.statusText}>• {conv.status}</Text>
-                  )}
-                </View>
 
-                <View style={styles.lastMessageRow}>
-                  <Text style={styles.lastMessage} numberOfLines={1}>
-                    {conv.isRead ? '✓✓ ' : ''}{conv.lastMessage}
-                  </Text>
-                  <View style={styles.convActions}>
-                    {Boolean(conv.unread && conv.unread > 0) && (
-                      <View style={styles.unreadBadge}>
-                        <Text style={styles.unreadCount}>{conv.unread > 99 ? "99+" : conv.unread}</Text>
+                  <View style={styles.tagStatusRow}>
+                    {conv.subject ? (
+                      <View style={styles.subjectTag}>
+                        <Text style={styles.subjectTagText}>{conv.subject}</Text>
                       </View>
-                    )}
-                    {conv.hasAttachment && <Ionicons name="attach-outline" size={18} color="#2563EB" />}
-                    {conv.isStarred && <Ionicons name="star-outline" size={18} color="#94A3B8" />}
-                    {conv.hasClock && <Ionicons name="time-outline" size={18} color="#94A3B8" />}
-                    {!(conv.unread && conv.unread > 0) && !conv.hasAttachment && !conv.isStarred && !conv.hasClock && (
-                      <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
-                    )}
+                    ) : null}
+                  </View>
+
+                  <View style={styles.lastMessageRow}>
+                    <Text
+                      style={[
+                        styles.lastMessage,
+                        conv.unread > 0 && { color: "#0F172A", fontWeight: "700" },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {conv.lastMessage}
+                    </Text>
+                    <View style={styles.convActions}>
+                      {conv.unread > 0 ? (
+                        <View style={styles.unreadBadge}>
+                          <Text style={styles.unreadCount}>{conv.unread > 99 ? "99+" : conv.unread}</Text>
+                        </View>
+                      ) : (
+                        <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
+                      )}
+                    </View>
                   </View>
                 </View>
-              </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : (
+          <View style={{ paddingVertical: 40, alignItems: "center", paddingHorizontal: 20 }}>
+            <Ionicons name="chatbubbles-outline" size={48} color="#CBD5E1" />
+            <Text style={{ fontSize: 16, fontWeight: "700", color: "#334155", marginTop: 12 }}>
+              No messages found
+            </Text>
+            <Text style={{ fontSize: 13, color: "#94A3B8", textAlign: "center", marginTop: 6, lineHeight: 18 }}>
+              {searchQuery
+                ? `No conversations matching "${searchQuery}"`
+                : "When you book a session or message a tutor, your conversations will show up here."}
+            </Text>
+            <TouchableOpacity
+              style={{
+                marginTop: 16,
+                backgroundColor: "#2563EB",
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                borderRadius: 10,
+              }}
+              onPress={() => router.push("/(student)/searchscreen")}
+            >
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>
+                Find a Tutor
+              </Text>
             </TouchableOpacity>
-          ))}
+          </View>
+        )}
+
+        {/* --- TUTORMATE TIP --- */}
+        <View style={styles.tipCard}>
+          <View style={styles.tipIconBg}>
+            <Ionicons name="bulb-outline" size={24} color="#2563EB" />
+          </View>
+          <View style={styles.tipContent}>
+            <Text style={styles.tipTitle}>TutorMate Tip</Text>
+            <Text style={styles.tipBody}>
+              Sending your homework questions 2 hours ahead helps tutors personalize your session notes!
+            </Text>
+          </View>
         </View>
       </ScrollView>
 
@@ -516,7 +564,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "#2563EB",
+    backgroundColor: "#EF4444",
     marginLeft: 6,
   },
   sectionHeader: {
@@ -537,67 +585,70 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "700",
     color: "#0F172A",
   },
   sectionSubtitle: {
     fontSize: 12,
-    color: "#94A3B8",
+    color: "#64748B",
   },
   quickConnectScroll: {
     marginBottom: 24,
   },
   quickTutor: {
     alignItems: "center",
-    marginRight: 20,
+    marginRight: 16,
     width: 60,
   },
   avatarWrapper: {
     position: "relative",
-    marginBottom: 8,
+    marginBottom: 6,
   },
   quickAvatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    borderWidth: 2,
-    borderColor: "#FFFFFF",
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#E2E8F0",
   },
   onlineBadge: {
     position: "absolute",
     bottom: 2,
     right: 2,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: "#10B981",
     borderWidth: 2,
     borderColor: "#FFFFFF",
   },
   quickName: {
-    fontSize: 11,
-    color: "#64748B",
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#334155",
     textAlign: "center",
   },
   newRoomBtn: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: "#EFF6FF",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
+    borderStyle: "dashed",
   },
   sectionHeaderTitle: {
     fontSize: 12,
     fontWeight: "800",
     color: "#94A3B8",
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   markReadLink: {
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
     color: "#2563EB",
   },
   conversationsList: {
@@ -606,28 +657,21 @@ const styles = StyleSheet.create({
   conversationCard: {
     flexDirection: "row",
     backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: "#F1F5F9",
   },
   convAvatarWrapper: {
     position: "relative",
-    marginRight: 14,
+    marginRight: 12,
   },
   convAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-  },
-  groupIconBg: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-    backgroundColor: "#EFF6FF",
-    justifyContent: "center",
-    alignItems: "center",
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#E2E8F0",
   },
   convContent: {
     flex: 1,
@@ -636,7 +680,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 4,
+    marginBottom: 2,
   },
   nameVerifiedRow: {
     flexDirection: "row",
@@ -654,23 +698,17 @@ const styles = StyleSheet.create({
   tagStatusRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 4,
   },
   subjectTag: {
     backgroundColor: "#EFF6FF",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
-    marginRight: 8,
   },
   subjectTagText: {
-    fontSize: 10,
-    fontWeight: "700",
+    fontSize: 11,
     color: "#2563EB",
-  },
-  statusText: {
-    fontSize: 10,
-    color: "#10B981",
     fontWeight: "600",
   },
   lastMessageRow: {
@@ -679,9 +717,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   lastMessage: {
-    flex: 1,
     fontSize: 13,
     color: "#64748B",
+    flex: 1,
     marginRight: 8,
   },
   convActions: {
@@ -690,47 +728,44 @@ const styles = StyleSheet.create({
   },
   unreadBadge: {
     backgroundColor: "#2563EB",
-    width: 20,
-    height: 20,
     borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
   },
   unreadCount: {
-    color: "#FFFFFF",
     fontSize: 10,
-    fontWeight: "800",
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   tipCard: {
     flexDirection: "row",
     backgroundColor: "#EFF6FF",
     borderRadius: 20,
-    padding: 20,
+    padding: 16,
     marginBottom: 20,
   },
   tipIconBg: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: "#FFFFFF",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 16,
+    marginRight: 12,
   },
   tipContent: {
     flex: 1,
   },
   tipTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "700",
     color: "#0F172A",
-    marginBottom: 4,
+    marginBottom: 2,
   },
   tipBody: {
-    fontSize: 13,
+    fontSize: 12,
     color: "#64748B",
-    lineHeight: 18,
+    lineHeight: 17,
   },
   tabBar: {
     flexDirection: "row",

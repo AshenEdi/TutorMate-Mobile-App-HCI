@@ -93,8 +93,14 @@ function resolveMessageType(m: any, resolvedUrl: string | null): "text" | "image
 
 export function ChatConversationScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ conversationId?: string; otherUserId?: string }>();
-  const conversationId = params.conversationId;
+  const params = useLocalSearchParams<{
+    conversationId?: string;
+    id?: string;
+    otherUserId?: string;
+    tutorId?: string;
+  }>();
+  const [activeConvId, setActiveConvId] = useState<string | null>(params.conversationId || params.id || null);
+  const conversationId = activeConvId;
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
