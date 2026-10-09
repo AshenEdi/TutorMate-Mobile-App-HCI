@@ -1,7 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useState, useEffect } from "react";
-import { supabase } from "../../lib/supabase";
+import { useEffect, useState } from "react";
 import {
   Platform,
   SafeAreaView,
@@ -13,6 +12,8 @@ import {
   View,
   ActivityIndicator,
 } from "react-native";
+import { markAllNotificationsAsRead } from "../services/notificationService";
+import { supabase } from "../../lib/supabase";
 
 // --- TYPES ---
 interface NotificationItem {
@@ -127,10 +128,18 @@ export default function NotificationsScreen() {
           timestamp = `${diffDays}d ago`;
         }
 
+        const normalizedType =
+          item.type === "dispute"
+            ? "session"
+            : item.type === "moderation"
+            ? "message"
+            : item.type;
+
         return {
           ...item,
+          type: normalizedType,
           timestamp,
-          timeGroup
+          timeGroup,
         };
       });
 
@@ -143,25 +152,41 @@ export default function NotificationsScreen() {
   };
 
   const handleMarkAllRead = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    await supabase
-      .from("notifications")
-      .update({ is_unread: false })
-      .eq("user_id", user.id)
-      .eq("is_unread", true);
-
     setNotificationsList((prev) =>
       prev.map((item: NotificationItem) => ({ ...item, is_unread: false })),
     );
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await markAllNotificationsAsRead(user.id);
+    }
   };
 
   const renderTimeGroup = (
     groupName: "TODAY" | "YESTERDAY" | "EARLIER THIS WEEK",
     subtitle?: string,
   ) => {
-    const items = notificationsList.filter((n) => n.timeGroup === groupName);
+    const items = notificationsList.filter((n) => {
+      if (n.timeGroup !== groupName) return false;
+      if (selectedTab === "all") return true;
+      if (selectedTab === "sessions")
+        return (
+          n.category?.toLowerCase() === "sessions" ||
+          n.type === "session" ||
+          n.type === "booking"
+        );
+      if (selectedTab === "messages")
+        return (
+          n.category?.toLowerCase() === "messages" || n.type === "message"
+        );
+      if (selectedTab === "reminders")
+        return (
+          n.category?.toLowerCase() === "reminders" ||
+          n.type === "wallet" ||
+          n.type === "material" ||
+          n.type === "review"
+        );
+      return true;
+    });
     if (items.length === 0) return null;
 
     return (

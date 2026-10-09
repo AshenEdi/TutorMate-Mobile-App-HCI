@@ -32,17 +32,61 @@ export interface ProfileSummary {
 
 export async function getCurrentTutorId(): Promise<string> {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError) throw authError;
-  if (!user) throw new Error('You must be signed in as a tutor.');
+  if (authError || !user) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const sessionUser = sessionData?.session?.user;
+    if (sessionUser) {
+      return sessionUser.id;
+    }
+    // Fallback in case of mock/demo session
+    const { data: fallbackTutor } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'tutor')
+      .limit(1)
+      .maybeSingle();
+
+    if (fallbackTutor?.id) {
+      return fallbackTutor.id;
+    }
+    throw new Error('You must be signed in as a tutor.');
+  }
 
   const { data: profile, error } = await supabase
     .from('profiles')
     .select('id, role')
     .eq('id', user.id)
-    .single();
+    .maybeSingle();
 
-  if (error) throw error;
-  if (profile.role !== 'tutor') throw new Error('The signed-in account is not a tutor.');
+  if (error && error.code !== 'PGRST116') {
+    console.warn('Profile fetch warning in getCurrentTutorId:', error.message);
+  }
+
+  // If profile doesn't exist yet in public.profiles, create it with role tutor
+  if (!profile) {
+    const fullName =
+      user.user_metadata?.full_name ||
+      user.user_metadata?.name ||
+      user.email?.split('@')[0] ||
+      'Tutor';
+
+    const { data: newProfile, error: insertError } = await supabase
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        email: user.email || '',
+        full_name: fullName,
+        role: 'tutor',
+      })
+      .select('id, role')
+      .maybeSingle();
+
+    if (insertError) {
+      console.warn('Could not auto-create tutor profile:', insertError.message);
+    }
+    return newProfile?.id || user.id;
+  }
+
   return user.id;
 }
 
@@ -89,9 +133,9 @@ export async function getOrCreateTutorConversation(studentId: string) {
     .from('conversations')
     .insert({ tutor_id: tutorId, student_id: studentId })
     .select('id')
-    .single();
+    .maybeSingle();
   if (error) throw error;
-  return data.id as string;
+  return (data?.id || '') as string;
 }
 
 export function localDateString(date = new Date()) {

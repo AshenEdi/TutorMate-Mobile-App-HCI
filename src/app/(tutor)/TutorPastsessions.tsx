@@ -23,10 +23,12 @@ import { TutorBottomNav } from '../../components/TutorBottomNav';
 import { TutorHeader } from '../../components/TutorHeader';
 import {
   formatBookingDate,
+  getCurrentTutorId,
   getProfilesById,
   getTutorBookings,
   localDateString,
 } from '../../lib/tutorData';
+import { getDisputesForTutor } from '../../services/disputeService';
 
 // --- Type Definitions ---
 type MainTab = 'upcoming' | 'past';
@@ -74,7 +76,14 @@ export default function TutorPastSessionsScreen() {
     let mounted = true;
     const loadRecords = async () => {
       try {
-        const bookings = await getTutorBookings();
+        const tutorId = await getCurrentTutorId();
+        const [bookings, disputes] = await Promise.all([
+          getTutorBookings(),
+          getDisputesForTutor(tutorId),
+        ]);
+
+        const disputesMap = new Map(disputes.map((d) => [d.booking_id || d.booking_ref, d]));
+
         const today = localDateString();
         setUpcomingCount(bookings.filter((booking) =>
           booking.session_date >= today &&
@@ -88,6 +97,21 @@ export default function TutorPastSessionsScreen() {
         setRecords(pastBookings.map((booking) => {
           const student = booking.student_id ? profiles.get(booking.student_id) : undefined;
           const total = Number(booking.total_price ?? 0);
+          const dispute = disputesMap.get(booking.id) || (booking.booking_ref ? disputesMap.get(booking.booking_ref) : undefined);
+
+          let payoutStatus = 'Payout completed';
+          if (dispute) {
+            if (dispute.status === 'pending' || dispute.status === 'investigating') {
+              payoutStatus = `Escrow Held (${dispute.code})`;
+            } else if (dispute.decision === 'full_refund') {
+              payoutStatus = 'Refunded to Student';
+            } else if (dispute.decision === 'partial_refund') {
+              payoutStatus = 'Partial Split ($20.00 Released)';
+            } else if (dispute.decision === 'dismiss') {
+              payoutStatus = 'Payout Released (Dispute Dismissed)';
+            }
+          }
+
           return {
             id: booking.id,
             studentName: student?.full_name || booking.student_name || 'Student',
@@ -98,7 +122,7 @@ export default function TutorPastSessionsScreen() {
             timeStr: `${booking.time_slot}${booking.duration ? ` (${booking.duration})` : ''}`,
             status: booking.status === 'completed' ? 'Completed' : booking.status === 'declined' ? 'Declined' : 'Cancelled',
             payoutAmount: `$${total.toFixed(2)}`,
-            payoutStatus: 'Session value',
+            payoutStatus,
             hasSessionNotes: Boolean(booking.focus_notes),
             summaryNote: booking.focus_notes || undefined,
           };

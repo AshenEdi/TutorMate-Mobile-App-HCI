@@ -17,6 +17,7 @@ import {
 import { TutorBottomNav } from '../../components/TutorBottomNav';
 import { supabase } from '../../../lib/supabase';
 import { getCurrentTutorId } from '../../lib/tutorData';
+import { createNotification } from '../../services/notificationService';
 
 interface ConversationMessage {
   id: string;
@@ -101,6 +102,26 @@ export default function TutorConversationScreen() {
       setMessages((previous) => [...previous, data as ConversationMessage]);
       setMessageText('');
       requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+
+      // Update conversations table with latest message and timestamp
+      void supabase
+        .from('conversations')
+        .update({
+          last_message: content,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id);
+
+      // Notify student
+      void createNotification({
+        userId: studentId,
+        role: 'student',
+        type: 'message',
+        title: 'New Message from Tutor',
+        description: content.length > 60 ? `${content.slice(0, 60)}...` : content,
+        referenceId: id,
+        category: 'Messages',
+      });
     } catch (error) {
       console.error('Failed to send tutor message:', error);
       Alert.alert('Message not sent', error instanceof Error ? error.message : 'Unable to send your message.');

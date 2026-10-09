@@ -3,6 +3,7 @@ import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../../lib/supabase";
+import { AlertModal, AlertType } from "../../components/ui/AlertModal";
 import {
     ActivityIndicator,
     Alert,
@@ -42,6 +43,17 @@ interface StudentProfileData {
   education: string | null;
   avatar_url: string | null;
   wallet_balance: number | null;
+  session_credits?: number | null;
+}
+
+export interface TransactionItem {
+  id: string;
+  amount: number;
+  type: "deposit" | "payment" | "refund" | string;
+  description: string;
+  created_at: string;
+  status: string;
+  reference?: string;
 }
 
 export default function UserProfileScreen() {
@@ -63,12 +75,37 @@ export default function UserProfileScreen() {
   const [processingPayment, setProcessingPayment] = useState(false);
   const [activeTab, setActiveTab] = useState("Profile");
 
-  const showMessage = (title: string, message: string) => {
-    if (Platform.OS === "web") {
-      window.alert(`${title}\n\n${message}`);
-    } else {
-      Alert.alert(title, message);
-    }
+  // --- TRANSACTION HISTORY STATES ---
+  const [historyModalVisible, setHistoryModalVisible] = useState(false);
+  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
+  const [transactionFilter, setTransactionFilter] = useState<"all" | "deposit" | "payment" | "refund">("all");
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    type: AlertType;
+    title: string;
+    message: string;
+    onOk?: () => void;
+  }>({
+    visible: false,
+    type: "info",
+    title: "",
+    message: "",
+  });
+
+  const showMessage = (
+    title: string,
+    message: string,
+    onOk?: () => void,
+    type: AlertType = "info"
+  ) => {
+    setAlertConfig({
+      visible: true,
+      type,
+      title,
+      message,
+      onOk,
+    });
   };
 
   const resetPaymentForm = () => {
@@ -85,6 +122,77 @@ export default function UserProfileScreen() {
     resetPaymentForm();
   };
 
+  const openTransactionHistory = async () => {
+    setHistoryModalVisible(true);
+    setLoadingTransactions(true);
+    try {
+      const {
+        data: { user: currentUser },
+      } = await supabase.auth.getUser();
+      const activeUser = currentUser || user;
+      if (!activeUser) {
+        setLoadingTransactions(false);
+        return;
+      }
+
+      // 1. Fetch from wallet_transactions table
+      const { data: walletTx, error: txError } = await supabase
+        .from("wallet_transactions")
+        .select("*")
+        .eq("user_id", activeUser.id)
+        .order("created_at", { ascending: false });
+
+      if (txError) {
+        console.warn("Wallet transactions fetch note:", txError.message);
+      }
+
+      // 2. Fetch student bookings to ensure complete history
+      const { data: bookingsData } = await supabase
+        .from("bookings")
+        .select("id, booking_ref, subject, total_price, status, created_at, session_date")
+        .eq("student_id", activeUser.id)
+        .order("created_at", { ascending: false });
+
+      const combined: TransactionItem[] = [];
+      const loggedBookingIds = new Set<string>();
+
+      (walletTx ?? []).forEach((tx: any) => {
+        if (tx.booking_id) loggedBookingIds.add(tx.booking_id);
+        const amt = Number(tx.amount || 0);
+        combined.push({
+          id: tx.id,
+          amount: amt,
+          type: tx.type || (amt >= 0 ? "deposit" : "payment"),
+          description: tx.description || (amt >= 0 ? "Wallet Top-up" : "Session Payment"),
+          created_at: tx.created_at || new Date().toISOString(),
+          status: "Completed",
+          reference: tx.id ? `#TX-${tx.id.slice(0, 6).toUpperCase()}` : undefined,
+        });
+      });
+
+      (bookingsData ?? []).forEach((b: any) => {
+        if (!loggedBookingIds.has(b.id) && b.total_price) {
+          combined.push({
+            id: `bkg-${b.id}`,
+            amount: -Math.abs(Number(b.total_price)),
+            type: "payment",
+            description: `Lesson: ${b.subject || "Tutoring Session"}`,
+            created_at: b.created_at || (b.session_date ? `${b.session_date}T12:00:00Z` : new Date().toISOString()),
+            status: b.status === "cancelled" ? "Cancelled" : "Completed",
+            reference: b.booking_ref ? `#${b.booking_ref}` : `#BKG-${b.id.slice(0, 6).toUpperCase()}`,
+          });
+        }
+      });
+
+      combined.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setTransactions(combined);
+    } catch (err) {
+      console.warn("Error fetching transaction history:", err);
+    } finally {
+      setLoadingTransactions(false);
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -96,13 +204,31 @@ export default function UserProfileScreen() {
       }
 
       try {
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("full_name, email, education, avatar_url, wallet_balance")
-          .eq("id", user.id)
-          .single();
-        if (error) throw error;
+        let profileData: Record<string, any> | null = null;
 
+        // Try selecting with session_credits first
+        const primaryQuery = await supabase
+          .from("profiles")
+          .select("full_name, email, education, avatar_url, wallet_balance, session_credits")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (primaryQuery.error) {
+          // Fallback if session_credits column does not exist yet
+          const fallbackQuery = await supabase
+            .from("profiles")
+            .select("full_name, email, education, avatar_url, wallet_balance")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          if (fallbackQuery.data) {
+            profileData = { ...fallbackQuery.data, session_credits: 0 };
+          }
+        } else if (primaryQuery.data) {
+          profileData = primaryQuery.data;
+        }
+
+        // Secondary metrics queries (non-fatal)
         const [
           completedSessionsResult,
           mentorsResult,
@@ -129,27 +255,23 @@ export default function UserProfileScreen() {
             .eq("student_id", user.id)
             .not("subject", "is", null),
         ]);
-        if (completedSessionsResult.error) throw completedSessionsResult.error;
-        if (mentorsResult.error) throw mentorsResult.error;
-        if (reviewsResult.error) throw reviewsResult.error;
-        if (subjectsResult.error) throw subjectsResult.error;
 
         const tutorIds = new Set(
           (mentorsResult.data ?? [])
-            .map((booking) => booking.tutor_id)
-            .filter((tutorId): tutorId is string => Boolean(tutorId)),
+            .map((booking: any) => booking.tutor_id)
+            .filter((tutorId: any): tutorId is string => Boolean(tutorId)),
         );
         const ratings = (reviewsResult.data ?? [])
-          .map((review) => Number(review.rating))
+          .map((review: any) => Number(review.rating))
           .filter(Number.isFinite);
         const averageRating = ratings.length
-          ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
+          ? ratings.reduce((sum: number, rating: number) => sum + rating, 0) / ratings.length
           : 0;
         const subjectNames = Array.from(
           new Set(
             (subjectsResult.data ?? [])
-              .map((booking) => booking.subject?.trim())
-              .filter((subject): subject is string => Boolean(subject)),
+              .map((booking: any) => booking.subject?.trim())
+              .filter((subject: any): subject is string => Boolean(subject)),
           ),
         );
         const subjectColors = [
@@ -160,10 +282,16 @@ export default function UserProfileScreen() {
         ];
 
         if (isMounted) {
-          setProfile({
-            ...data,
-            wallet_balance: data.wallet_balance == null ? 0 : Number(data.wallet_balance),
-          });
+          if (profileData) {
+            setProfile({
+              full_name: profileData.full_name || authProfile?.full_name || "",
+              email: profileData.email || user.email || "",
+              education: profileData.education || "",
+              avatar_url: profileData.avatar_url || null,
+              wallet_balance: profileData.wallet_balance == null ? 0 : Number(profileData.wallet_balance),
+              session_credits: profileData.session_credits == null ? 0 : Number(profileData.session_credits),
+            });
+          }
           setSessionsCompleted(completedSessionsResult.count ?? 0);
           setMentorCount(tutorIds.size);
           setRatingAverage(averageRating);
@@ -176,8 +304,7 @@ export default function UserProfileScreen() {
           );
         }
       } catch (error) {
-        console.error("Error fetching student profile:", error);
-        Alert.alert("Error", "Unable to load your profile.");
+        console.warn("Non-fatal notice fetching student profile:", error);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -466,6 +593,14 @@ export default function UserProfileScreen() {
 
             <View style={styles.balanceRow}>
               <Text style={styles.balanceAmount}>${(profile?.wallet_balance ?? 0).toFixed(2)}</Text>
+              {(profile?.session_credits ?? 0) > 0 ? (
+                <View style={{ backgroundColor: "#ECFDF5", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Ionicons name="gift-outline" size={14} color="#059669" />
+                  <Text style={{ fontSize: 11.5, fontWeight: "700", color: "#059669" }}>
+                    {profile?.session_credits} Free Credit{profile?.session_credits !== 1 ? "s" : ""}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -484,7 +619,11 @@ export default function UserProfileScreen() {
               <Text style={styles.addFundsText}>Add Funds</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.historyBtn}>
+            <TouchableOpacity 
+              style={styles.historyBtn}
+              onPress={openTransactionHistory}
+              activeOpacity={0.7}
+            >
               <Ionicons
                 name="receipt-outline"
                 size={16}
@@ -779,6 +918,227 @@ export default function UserProfileScreen() {
         </View>
       </Modal>
 
+      {/* --- TRANSACTION HISTORY MODAL --- */}
+      <Modal
+        visible={historyModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setHistoryModalVisible(false)}
+      >
+        <View style={styles.historyModalOverlay}>
+          <View style={styles.historyModalContainer}>
+            <View style={styles.historyModalHeader}>
+              <View>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={styles.historyModalTitle}>Transaction History</Text>
+                  <View style={styles.historyCountBadge}>
+                    <Text style={styles.historyCountText}>{transactions.length}</Text>
+                  </View>
+                </View>
+                <Text style={styles.historyModalSubtitle}>
+                  All wallet top-ups, lesson payments & refunds
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.paymentCloseButton}
+                onPress={() => setHistoryModalVisible(false)}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Quick Summary Banner */}
+            <View style={styles.historySummaryBar}>
+              <View style={styles.historySummaryItem}>
+                <Text style={styles.historySummaryLabel}>Wallet Balance</Text>
+                <Text style={styles.historySummaryValBlue}>
+                  ${(profile?.wallet_balance ?? 0).toFixed(2)}
+                </Text>
+              </View>
+              <View style={styles.historySummaryDivider} />
+              <View style={styles.historySummaryItem}>
+                <Text style={styles.historySummaryLabel}>Total Added</Text>
+                <Text style={styles.historySummaryValGreen}>
+                  +${transactions
+                    .filter((t) => t.amount > 0)
+                    .reduce((sum, t) => sum + t.amount, 0)
+                    .toFixed(2)}
+                </Text>
+              </View>
+              <View style={styles.historySummaryDivider} />
+              <View style={styles.historySummaryItem}>
+                <Text style={styles.historySummaryLabel}>Total Spent</Text>
+                <Text style={styles.historySummaryValRed}>
+                  -${Math.abs(
+                    transactions
+                      .filter((t) => t.amount < 0)
+                      .reduce((sum, t) => sum + t.amount, 0)
+                  ).toFixed(2)}
+                </Text>
+              </View>
+            </View>
+
+            {/* Filter Tabs */}
+            <View style={styles.historyFilterRow}>
+              {(["all", "deposit", "payment", "refund"] as const).map((filterKey) => {
+                const isActive = transactionFilter === filterKey;
+                const label =
+                  filterKey === "all"
+                    ? "All"
+                    : filterKey === "deposit"
+                    ? "Top-ups"
+                    : filterKey === "payment"
+                    ? "Lessons"
+                    : "Refunds";
+                return (
+                  <TouchableOpacity
+                    key={filterKey}
+                    style={[styles.historyFilterChip, isActive && styles.historyFilterChipActive]}
+                    onPress={() => setTransactionFilter(filterKey)}
+                  >
+                    <Text
+                      style={[
+                        styles.historyFilterChipText,
+                        isActive && styles.historyFilterChipTextActive,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Transactions List */}
+            {loadingTransactions ? (
+              <View style={{ paddingVertical: 40, alignItems: "center" }}>
+                <ActivityIndicator size="small" color="#2563EB" />
+                <Text style={{ marginTop: 8, fontSize: 13, color: "#64748B" }}>
+                  Loading transactions...
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 24 }}
+              >
+                {(() => {
+                  const filtered = transactions.filter((t) => {
+                    if (transactionFilter === "deposit") return t.type === "deposit" || t.amount > 0;
+                    if (transactionFilter === "payment") return t.type === "payment" || t.amount < 0;
+                    if (transactionFilter === "refund") return t.type === "refund";
+                    return true;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <View style={styles.historyEmptyState}>
+                        <Ionicons name="receipt-outline" size={44} color="#CBD5E1" />
+                        <Text style={styles.historyEmptyTitle}>No Transactions Found</Text>
+                        <Text style={styles.historyEmptySubtitle}>
+                          {transactionFilter === "all"
+                            ? "Your wallet deposits and lesson payments will be recorded here automatically."
+                            : `No ${transactionFilter} records found.`}
+                        </Text>
+                      </View>
+                    );
+                  }
+
+                  return filtered.map((tx) => {
+                    const isCredit = tx.amount > 0 || tx.type === "deposit" || tx.type === "refund";
+                    const isRefund = tx.type === "refund";
+
+                    return (
+                      <View key={tx.id} style={styles.txCard}>
+                        <View
+                          style={[
+                            styles.txIconBg,
+                            isRefund
+                              ? { backgroundColor: "#EFF6FF" }
+                              : isCredit
+                              ? { backgroundColor: "#ECFDF5" }
+                              : { backgroundColor: "#FEF2F2" },
+                          ]}
+                        >
+                          <Ionicons
+                            name={
+                              isRefund
+                                ? "refresh-circle"
+                                : isCredit
+                                ? "arrow-down-circle"
+                                : "arrow-up-circle"
+                            }
+                            size={22}
+                            color={isRefund ? "#2563EB" : isCredit ? "#059669" : "#DC2626"}
+                          />
+                        </View>
+
+                        <View style={styles.txDetailsCol}>
+                          <Text style={styles.txDescription} numberOfLines={1}>
+                            {tx.description}
+                          </Text>
+                          <View style={styles.txMetaRow}>
+                            {tx.reference && (
+                              <Text style={styles.txRef}>{tx.reference} • </Text>
+                            )}
+                            <Text style={styles.txDate}>
+                              {new Date(tx.created_at).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}{" "}
+                              •{" "}
+                              {new Date(tx.created_at).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <View style={styles.txAmountCol}>
+                          <Text
+                            style={[
+                              styles.txAmountText,
+                              isCredit ? styles.txAmountCredit : styles.txAmountDebit,
+                            ]}
+                          >
+                            {isCredit ? "+" : "-"}
+                            ${Math.abs(tx.amount).toFixed(2)}
+                          </Text>
+                          <View
+                            style={[
+                              styles.txStatusPill,
+                              tx.status === "Cancelled" && { backgroundColor: "#F1F5F9" },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.txStatusText,
+                                tx.status === "Cancelled" && { color: "#64748B" },
+                              ]}
+                            >
+                              {tx.status}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  });
+                })()}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity
+              style={styles.historyCloseBottomBtn}
+              onPress={() => setHistoryModalVisible(false)}
+            >
+              <Text style={styles.historyCloseBottomText}>Close History</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* --- BOTTOM TAB BAR --- */}
       <View style={styles.tabBar}>
         {[
@@ -818,6 +1178,19 @@ export default function UserProfileScreen() {
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* --- IN-APP ALERT MODAL --- */}
+      <AlertModal
+        visible={alertConfig.visible}
+        type={alertConfig.type}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        onClose={() => {
+          const action = alertConfig.onOk;
+          setAlertConfig((prev) => ({ ...prev, visible: false }));
+          action?.();
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -1500,5 +1873,203 @@ const styles = StyleSheet.create({
   tabLabelActive: {
     color: "#2563EB",
     fontWeight: "600",
+  },
+  /* --- TRANSACTION HISTORY MODAL STYLES --- */
+  historyModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.6)",
+    justifyContent: "flex-end",
+  },
+  historyModalContainer: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "85%",
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
+  },
+  historyModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  historyModalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  historyCountBadge: {
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  historyCountText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#2563EB",
+  },
+  historyModalSubtitle: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 2,
+  },
+  historySummaryBar: {
+    flexDirection: "row",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+  },
+  historySummaryItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  historySummaryLabel: {
+    fontSize: 10,
+    color: "#64748B",
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  historySummaryValBlue: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#2563EB",
+  },
+  historySummaryValGreen: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#059669",
+  },
+  historySummaryValRed: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#DC2626",
+  },
+  historySummaryDivider: {
+    width: 1,
+    backgroundColor: "#E2E8F0",
+    marginVertical: 2,
+  },
+  historyFilterRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+  },
+  historyFilterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: "#F1F5F9",
+  },
+  historyFilterChipActive: {
+    backgroundColor: "#2563EB",
+  },
+  historyFilterChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  historyFilterChipTextActive: {
+    color: "#FFFFFF",
+  },
+  historyEmptyState: {
+    alignItems: "center",
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  historyEmptyTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#334155",
+    marginTop: 10,
+  },
+  historyEmptySubtitle: {
+    fontSize: 12,
+    color: "#94A3B8",
+    textAlign: "center",
+    marginTop: 4,
+  },
+  txCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+  },
+  txIconBg: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  txDetailsCol: {
+    flex: 1,
+    marginRight: 8,
+  },
+  txDescription: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  txMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  txRef: {
+    fontSize: 11,
+    color: "#64748B",
+    fontWeight: "600",
+  },
+  txDate: {
+    fontSize: 11,
+    color: "#94A3B8",
+  },
+  txAmountCol: {
+    alignItems: "flex-end",
+  },
+  txAmountText: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  txAmountCredit: {
+    color: "#059669",
+  },
+  txAmountDebit: {
+    color: "#0F172A",
+  },
+  txStatusPill: {
+    backgroundColor: "#ECFDF5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 2,
+  },
+  txStatusText: {
+    fontSize: 9.5,
+    fontWeight: "700",
+    color: "#059669",
+  },
+  historyCloseBottomBtn: {
+    backgroundColor: "#F1F5F9",
+    paddingVertical: 12,
+    borderRadius: 20,
+    alignItems: "center",
+    marginTop: 10,
+  },
+  historyCloseBottomText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#475569",
   },
 });

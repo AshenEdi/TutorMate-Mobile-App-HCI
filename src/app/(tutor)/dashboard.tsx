@@ -4,12 +4,14 @@ import { useEffect, useState } from 'react';
 import {
   Alert,
   Image,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -22,6 +24,11 @@ import {
   getProfilesById,
   getTutorBookings,
 } from '../../lib/tutorData';
+import {
+  DisputeRecord,
+  getDisputesForTutor,
+  submitTutorDisputeResponse,
+} from '../../services/disputeService';
 
 // --- Types ---
 type TabType = 'Pending' | 'Accepted' | 'Declined';
@@ -55,12 +62,28 @@ export default function TutorBookingScreen() {
   const [requests, setRequests] = useState<BookingRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [tutorProfile, setTutorProfile] = useState<{ standing: string; strikes_count: number } | null>(null);
+  const [activeDisputes, setActiveDisputes] = useState<DisputeRecord[]>([]);
+  const [selectedDisputeForResponse, setSelectedDisputeForResponse] = useState<DisputeRecord | null>(null);
+  const [responseStatement, setResponseStatement] = useState("");
+  const [submittingResponse, setSubmittingResponse] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     const loadRequests = async () => {
       try {
-        const bookings = await getTutorBookings();
+        const tutorId = await getCurrentTutorId();
+        const [bookings, disputes, { data: prof }] = await Promise.all([
+          getTutorBookings(),
+          getDisputesForTutor(tutorId),
+          supabase.from('profiles').select('standing, strikes_count').eq('id', tutorId).single(),
+        ]);
+
+        if (mounted) {
+          setActiveDisputes(disputes.filter((d) => d.status === 'pending' || d.status === 'investigating'));
+          if (prof) setTutorProfile(prof);
+        }
+
         const profiles = await getProfilesById(bookings.map((booking) => booking.student_id));
         if (!mounted) return;
         setRequests(bookings
@@ -144,6 +167,100 @@ export default function TutorBookingScreen() {
         contentContainerStyle={styles.scrollContainer}
         showsVerticalScrollIndicator={false}
       >
+        {/* --- Account Standing Card --- */}
+        <View style={{
+          backgroundColor: '#FFFFFF',
+          borderRadius: 16,
+          padding: 14,
+          marginBottom: 16,
+          borderWidth: 1,
+          borderColor: '#E2E8F0',
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: (tutorProfile?.strikes_count ?? 0) > 0 ? '#FEE2E2' : '#CCFBF1',
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}>
+              <Ionicons
+                name={(tutorProfile?.strikes_count ?? 0) > 0 ? "warning-outline" : "shield-checkmark"}
+                size={18}
+                color={(tutorProfile?.strikes_count ?? 0) > 0 ? "#DC2626" : "#0D9488"}
+              />
+            </View>
+            <View>
+              <Text style={{ fontSize: 13.5, fontWeight: '800', color: '#0F172A' }}>
+                Account Standing
+              </Text>
+              <Text style={{ fontSize: 11.5, color: '#64748B' }}>
+                {(tutorProfile?.strikes_count ?? 0) === 0
+                  ? "Good Standing • 0 Strikes"
+                  : `${tutorProfile?.strikes_count} Strike${(tutorProfile?.strikes_count ?? 0) !== 1 ? "s" : ""} • Under Review`}
+              </Text>
+            </View>
+          </View>
+          <View style={{
+            backgroundColor: (tutorProfile?.strikes_count ?? 0) > 0 ? '#FEF2F2' : '#EEF4FF',
+            paddingHorizontal: 8,
+            paddingVertical: 3,
+            borderRadius: 8,
+          }}>
+            <Text style={{
+              fontSize: 11,
+              fontWeight: '700',
+              color: (tutorProfile?.strikes_count ?? 0) > 0 ? '#DC2626' : '#0052CC',
+            }}>
+              {(tutorProfile?.standing || "Good Standing").toUpperCase()}
+            </Text>
+          </View>
+        </View>
+
+        {/* --- Dispute Action Required Alert Banner --- */}
+        {activeDisputes.length > 0 && (
+          <View style={{
+            backgroundColor: '#FFF1F2',
+            borderRadius: 16,
+            padding: 14,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: '#FECDD3',
+            gap: 8,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="alert-circle" size={18} color="#DC2626" />
+              <Text style={{ fontSize: 13.5, fontWeight: '800', color: '#881337' }}>
+                Action Required • Active Dispute ({activeDisputes[0].code})
+              </Text>
+            </View>
+            <Text style={{ fontSize: 12, color: '#9F1239', lineHeight: 16 }}>
+              Student {activeDisputes[0].student_name} reported an issue for {activeDisputes[0].subject}: &ldquo;{activeDisputes[0].reason}&rdquo;
+            </Text>
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#991B1B',
+                borderRadius: 12,
+                paddingVertical: 8,
+                alignItems: 'center',
+                marginTop: 4,
+              }}
+              onPress={() => {
+                setSelectedDisputeForResponse(activeDisputes[0]);
+                setResponseStatement(activeDisputes[0].tutor_statement || "");
+              }}
+            >
+              <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' }}>
+                {activeDisputes[0].tutor_statement ? "Edit Dispute Explanation" : "Submit Response to Admin"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* --- Title & Filter Row --- */}
         <View style={styles.titleSection}>
           <View style={styles.titleRow}>
@@ -459,6 +576,106 @@ export default function TutorBookingScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* --- Tutor Dispute Response Modal --- */}
+      <Modal
+        visible={Boolean(selectedDisputeForResponse)}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedDisputeForResponse(null)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          justifyContent: 'flex-end',
+        }}>
+          <View style={{
+            backgroundColor: '#FFFFFF',
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            padding: 20,
+            paddingBottom: 36,
+            gap: 12,
+          }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>
+                Dispute Response ({selectedDisputeForResponse?.code})
+              </Text>
+              <TouchableOpacity onPress={() => setSelectedDisputeForResponse(null)}>
+                <Ionicons name="close" size={24} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B' }}>STUDENT COMPLAINT</Text>
+              <Text style={{ fontSize: 12.5, color: '#334155', marginTop: 2 }}>
+                &ldquo;{selectedDisputeForResponse?.reason}&rdquo;
+              </Text>
+            </View>
+
+            <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+              Your Official Statement to Admin
+            </Text>
+            <TextInput
+              style={{
+                backgroundColor: '#F8FAFC',
+                borderRadius: 14,
+                padding: 12,
+                height: 110,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                fontSize: 13,
+                color: '#0F172A',
+                textAlignVertical: 'top',
+              }}
+              placeholder="Explain any technical disruption, Wi-Fi outage, or agreed rescheduling details..."
+              placeholderTextColor="#94A3B8"
+              multiline
+              value={responseStatement}
+              onChangeText={setResponseStatement}
+            />
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#2563EB',
+                borderRadius: 20,
+                height: 44,
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginTop: 4,
+              }}
+              disabled={submittingResponse}
+              onPress={async () => {
+                if (!selectedDisputeForResponse || responseStatement.trim().length < 5) {
+                  Alert.alert("Error", "Please provide a detailed response (at least 5 characters).");
+                  return;
+                }
+
+                setSubmittingResponse(true);
+                const res = await submitTutorDisputeResponse(selectedDisputeForResponse.id, responseStatement.trim());
+                setSubmittingResponse(false);
+
+                if (res.success) {
+                  Alert.alert("Success", "Your statement has been submitted to Admin Moderation.");
+                  setSelectedDisputeForResponse(null);
+                  setResponseStatement("");
+                  // Refresh active disputes
+                  const tutorId = await getCurrentTutorId();
+                  const updatedDisputes = await getDisputesForTutor(tutorId);
+                  setActiveDisputes(updatedDisputes.filter((d) => d.status === 'pending' || d.status === 'investigating'));
+                } else {
+                  Alert.alert("Error", res.error || "Failed to submit response.");
+                }
+              }}
+            >
+              <Text style={{ color: '#FFFFFF', fontSize: 13.5, fontWeight: '700' }}>
+                {submittingResponse ? "Submitting..." : "Submit Explanation to Admin"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <TutorBottomNav activeTab="requests" />
     </SafeAreaView>
   );

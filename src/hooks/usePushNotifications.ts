@@ -19,8 +19,8 @@ Notifications.setNotificationHandler({
 export function usePushNotifications() {
   const [expoPushToken, setExpoPushToken] = useState<string | undefined>();
   const [notification, setNotification] = useState<Notifications.Notification | undefined>();
-  const notificationListener = useRef<any>();
-  const responseListener = useRef<any>();
+  const notificationListener = useRef<Notifications.EventSubscription | undefined>(undefined);
+  const responseListener = useRef<Notifications.EventSubscription | undefined>(undefined);
 
   useEffect(() => {
     // 1. Register for push notifications
@@ -41,12 +41,12 @@ export function usePushNotifications() {
     });
 
     // 3. Listen for incoming notifications while app is open
-    notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+    notificationListener.current = Notifications.addNotificationReceivedListener((notification: Notifications.Notification) => {
       setNotification(notification);
     });
 
     // 4. Listen for user tapping on a notification
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+    responseListener.current = Notifications.addNotificationResponseReceivedListener((response: Notifications.NotificationResponse) => {
       console.log('User tapped notification:', response);
       // Here we can use router.push() to deep link to a specific screen if needed
     });

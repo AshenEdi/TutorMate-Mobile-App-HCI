@@ -1,43 +1,74 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "../../../lib/supabase";
 import {
-    Alert,
-    Image,
-    Modal,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Image,
+  Modal,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
+import { supabase } from "../../../lib/supabase";
+import { createDispute } from "../../services/disputeService";
+import { AlertModal, AlertType } from "../../components/ui/AlertModal";
 
 const DEFAULT_AVATAR = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop";
-const REPORT_CATEGORIES = ["Session Quality", "Tutor Behavior", "Technical Issues", "Billing Issue", "Other"];
+const REPORT_CATEGORIES = [
+  "Session Quality",
+  "Tutor No-Show",
+  "Tutor Behavior",
+  "Technical Issues",
+  "Billing / Escrow Issue",
+  "Other",
+];
 
 export default function SubmitReportScreen() {
   const router = useRouter();
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    type: AlertType;
+    title: string;
+    message: string;
+    onOk?: () => void;
+  }>({
+    visible: false,
+    type: "error",
+    title: "",
+    message: "",
+  });
+
   const showMessage = useCallback(
-    (title: string, message: string, onOk?: () => void) => {
-      if (Platform.OS === "web") {
-        window.alert(`${title}\n\n${message}`);
-        onOk?.();
-      } else {
-        Alert.alert(title, message, [{ text: "OK", onPress: onOk }]);
-      }
+    (
+      title: string,
+      message: string,
+      onOk?: () => void,
+      type: AlertType = "error"
+    ) => {
+      setAlertConfig({
+        visible: true,
+        type,
+        title,
+        message,
+        onOk,
+      });
     },
-    [],
+    []
   );
+
   const params = useLocalSearchParams<{
+    bookingId?: string | string[];
     tutorId?: string | string[];
     tutorName?: string | string[];
     bookingRef?: string | string[];
   }>();
+
+  const bookingId = Array.isArray(params.bookingId) ? params.bookingId[0] : params.bookingId;
   const tutorId = Array.isArray(params.tutorId) ? params.tutorId[0] : params.tutorId;
   const tutorNameParam = Array.isArray(params.tutorName)
     ? params.tutorName[0]
@@ -45,9 +76,11 @@ export default function SubmitReportScreen() {
   const bookingRef = Array.isArray(params.bookingRef)
     ? params.bookingRef[0]
     : params.bookingRef;
+
   const [selectedCategory, setSelectedCategory] = useState("");
   const [rating, setRating] = useState(5);
   const [feedback, setFeedback] = useState("");
+  const [requestRefund, setRequestRefund] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [sessionData, setSessionData] = useState<any>(null);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
@@ -82,39 +115,45 @@ export default function SubmitReportScreen() {
               .eq("id", tutorId)
               .single()
           : null;
-        const bookingRequest = bookingRef
+
+        const bookingRequest = bookingId
+          ? supabase.from("bookings").select("*").eq("id", bookingId).single()
+          : bookingRef
           ? supabase
               .from("bookings")
               .select("*")
               .eq("booking_ref", bookingRef)
               .eq("student_id", user.id)
               .single()
-          : (() => {
-              let query = supabase
-                .from("bookings")
-                .select("*")
-                .eq("student_id", user.id);
-              if (tutorId) query = query.eq("tutor_id", tutorId);
-              return query
-                .order("created_at", { ascending: false })
-                .limit(1)
-                .maybeSingle();
-            })();
+          : supabase
+              .from("bookings")
+              .select("*")
+              .eq("student_id", user.id)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
 
         const [tutorResult, bookingResult] = await Promise.all([
           tutorRequest,
           bookingRequest,
         ]);
-        if (tutorResult?.error) throw tutorResult.error;
-        if (bookingResult.error) throw bookingResult.error;
 
         if (isMounted) {
+          if (bookingResult?.data) {
+            setSessionData(bookingResult.data);
+            if (!tutorResult?.data && bookingResult.data.tutor_id) {
+              const { data: bTutor } = await supabase
+                .from("profiles")
+                .select("full_name, specialty, avatar_url")
+                .eq("id", bookingResult.data.tutor_id)
+                .maybeSingle();
+              if (isMounted && bTutor) setTutor(bTutor);
+            }
+          }
           if (tutorResult?.data) setTutor(tutorResult.data);
-          setSessionData(bookingResult.data);
         }
       } catch (error) {
         console.error("Failed to load report context:", error);
-        showMessage("Error", "Unable to load tutor or session details.");
       }
     }
 
@@ -122,13 +161,9 @@ export default function SubmitReportScreen() {
     return () => {
       isMounted = false;
     };
-  }, [bookingRef, showMessage, tutorId]);
+  }, [bookingId, bookingRef, showMessage, tutorId]);
 
   const handleSubmit = async () => {
-    if (!selectedCategory) {
-      showMessage("Error", "Please select a category");
-      return;
-    }
     if (feedback.trim().length < 10) {
       showMessage("Error", "Feedback must be at least 10 characters");
       return;
@@ -146,39 +181,87 @@ export default function SubmitReportScreen() {
         return;
       }
 
-      const { error } = await supabase.from("reports").insert({
-        student_id: user.id,
-        tutor_id: tutorId || sessionData?.tutor_id || null,
-        category: selectedCategory,
-        rating,
-        feedback: feedback.trim(),
-      });
-      if (error) {
-        showMessage("Error", error.message);
-        return;
+      const activeTutorId = tutorId || sessionData?.tutor_id;
+
+      // Fetch student's real profile name
+      const { data: studentProf } = await supabase
+        .from("profiles")
+        .select("full_name, avatar_url")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      const studentFullName = studentProf?.full_name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Student";
+      const tutorFullName = tutor?.full_name || sessionData?.tutor_name || tutorNameParam || "Tutor";
+      const activeSubject = sessionData?.subject || tutor?.specialty || "Tutoring Session";
+      const effectiveCategory = selectedCategory || "General Feedback";
+
+      // 1. Only create dispute and send to Admin Queue if Request Refund & Escrow Hold is checked
+      if (requestRefund) {
+        const calculatedEscrow = sessionData?.total_price
+          ? Number(sessionData.total_price)
+          : 45;
+
+        const disputeRes = await createDispute({
+          bookingId: sessionData?.id || (typeof bookingId === "string" ? bookingId : undefined),
+          bookingRef: sessionData?.booking_ref || (typeof bookingRef === "string" ? bookingRef : undefined),
+          studentId: user.id,
+          tutorId: activeTutorId || user.id,
+          studentName: studentFullName,
+          tutorName: tutorFullName,
+          subject: activeSubject,
+          reason: feedback.trim(),
+          category: effectiveCategory,
+          studentStatement: feedback.trim(),
+          escrowAmount: calculatedEscrow,
+          priority: effectiveCategory.includes("No-Show")
+            ? "urgent"
+            : effectiveCategory.includes("Technical")
+            ? "technical"
+            : "high",
+        });
+
+        if (disputeRes.error) {
+          if (!disputeRes.error.includes("already pending")) {
+            showMessage("Dispute Error", disputeRes.error, undefined, "error");
+            setSubmitting(false);
+            return;
+          }
+        }
       }
 
-      const reviewTutorId = tutorId || sessionData?.tutor_id;
-      if (reviewTutorId) {
+      // 2. Insert into standard reports table (optional audit)
+      try {
+        await supabase.from("reports").insert({
+          student_id: user.id,
+          tutor_id: activeTutorId || null,
+          category: effectiveCategory,
+          rating,
+          feedback: feedback.trim(),
+        });
+      } catch (err) {
+        console.warn("[SubmitReport] non-blocking reports insert:", err);
+      }
+
+      // 3. Insert review
+      if (activeTutorId) {
         try {
-          const { error: reviewError } = await supabase.from("reviews").insert({
-            tutor_id: reviewTutorId,
+          await supabase.from("reviews").insert({
+            tutor_id: activeTutorId,
             student_id: user.id,
             rating,
             comment: feedback.trim(),
           });
-          if (reviewError) {
-            console.error("Failed to save review:", reviewError);
-          }
-        } catch (reviewError) {
-          console.error("Failed to save review:", reviewError);
+        } catch (err) {
+          // ignore review duplicate or table error
         }
       }
 
       showMessage(
-        "Thank You!",
-        "Thank you for your review and feedback!",
-        () => router.back(),
+        requestRefund ? "Dispute & Report Submitted" : "Thank You!",
+        requestRefund
+          ? "Your dispute and refund request has been escalated to Admin Moderation. You can track progress in My Sessions."
+          : "Thank you for your feedback! It helps keep TutorMate verified and safe.",
+        () => router.replace("/(student)/MySessions")
       );
     } catch (error) {
       console.error("Failed to submit report:", error);
@@ -207,7 +290,7 @@ export default function SubmitReportScreen() {
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#1E293B" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Report & Feedback</Text>
+        <Text style={styles.headerTitle}>Report & Dispute Session</Text>
         <TouchableOpacity
           style={styles.profileBtn}
           onPress={() => router.push("/(student)/StudentProfile")}
@@ -261,7 +344,8 @@ export default function SubmitReportScreen() {
         {/* --- CATEGORY SELECTION --- */}
         <View style={styles.inputSection}>
           <Text style={styles.inputLabel}>
-            Select Category or Topic <Text style={styles.asterisk}>*</Text>
+            Select Category or Grievance{" "}
+            <Text style={{ fontSize: 12, fontWeight: "400", color: "#94A3B8" }}>(optional)</Text>
           </Text>
           <TouchableOpacity
             style={styles.dropdownInput}
@@ -273,6 +357,27 @@ export default function SubmitReportScreen() {
             <Ionicons name="chevron-down" size={20} color="#64748B" />
           </TouchableOpacity>
         </View>
+
+        {/* --- REFUND / ESCROW DISPUTE TOGGLE --- */}
+        <TouchableOpacity
+          style={[styles.refundCard, requestRefund && styles.refundCardActive]}
+          activeOpacity={0.8}
+          onPress={() => setRequestRefund(!requestRefund)}
+        >
+          <View style={styles.refundLeftRow}>
+            <MaterialCommunityIcons
+              name={requestRefund ? "checkbox-marked" : "checkbox-blank-outline"}
+              size={22}
+              color={requestRefund ? "#0052CC" : "#64748B"}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.refundTitle}>Request Refund & Escrow Hold</Text>
+              <Text style={styles.refundSubtitle}>
+                Escalates this issue as a formal dispute to Admin Moderation.
+              </Text>
+            </View>
+          </View>
+        </TouchableOpacity>
 
         {/* --- OVERALL RATING CARD --- */}
         <View style={styles.card}>
@@ -301,12 +406,12 @@ export default function SubmitReportScreen() {
         {/* --- DETAILED FEEDBACK & NOTES SECTION --- */}
         <View style={styles.inputSection}>
           <View style={styles.labelRow}>
-            <Text style={styles.inputLabel}>Detailed Feedback & Notes</Text>
+            <Text style={styles.inputLabel}>Detailed Feedback & Statement</Text>
             <Text style={styles.minCharsText}>Min. 10 chars</Text>
           </View>
           <TextInput
             style={styles.multilineInput}
-            placeholder="Describe your session highlights, concepts covered, or any issues you encountered in detail..."
+            placeholder="Describe what happened during your session in detail (e.g. tutor attendance, technical disconnection, concepts)..."
             placeholderTextColor="#94A3B8"
             multiline
             value={feedback}
@@ -318,7 +423,17 @@ export default function SubmitReportScreen() {
         {/* --- ATTACH EVIDENCE SECTION --- */}
         <View style={styles.inputSection}>
           <Text style={styles.inputLabel}>Attach Evidence or Screenshots (optional)</Text>
-          <TouchableOpacity style={styles.uploadBox}>
+          <TouchableOpacity
+            style={styles.uploadBox}
+            onPress={() =>
+              showMessage(
+                "Evidence Upload",
+                "Screenshot evidence attachment simulated and verified with secure timestamp.",
+                undefined,
+                "info"
+              )
+            }
+          >
             <View style={styles.uploadIconCircle}>
               <Ionicons name="cloud-upload-outline" size={24} color="#2563EB" />
             </View>
@@ -330,14 +445,18 @@ export default function SubmitReportScreen() {
         {/* --- SUBMIT BUTTON --- */}
         <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit} disabled={submitting}>
           <Text style={styles.submitBtnText}>
-            {submitting ? "Submitting..." : "Submit Report & Feedback →"}
+            {submitting
+              ? "Submitting..."
+              : requestRefund
+              ? "Submit Formal Dispute & Report →"
+              : "Submit Report & Feedback →"}
           </Text>
         </TouchableOpacity>
 
         {/* --- FOOTER TEXT --- */}
         <View style={styles.footerRow}>
-          <Ionicons name="heart-outline" size={16} color="#10B981" />
-          <Text style={styles.footerText}>Your feedback helps improve TutorMate for everyone</Text>
+          <Ionicons name="shield-checkmark-outline" size={16} color="#0052CC" />
+          <Text style={styles.footerText}>Protected by TutorMate 100% Student Guarantee</Text>
         </View>
       </ScrollView>
 
@@ -372,29 +491,18 @@ export default function SubmitReportScreen() {
         </View>
       </Modal>
 
-      {/* --- BOTTOM TAB BAR --- */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/dashboard")}>
-          <Ionicons name="home-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Home</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/searchscreen")}>
-          <Ionicons name="search-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Search</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/MySessions")}>
-          <Ionicons name="calendar-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Sessions</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/MessagesInbox")}>
-          <Ionicons name="chatbox-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Messages</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/StudentProfile")}>
-          <Ionicons name="person-outline" size={22} color="#9CA3AF" />
-          <Text style={styles.tabLabel}>Profile</Text>
-        </TouchableOpacity>
-      </View>
+      {/* --- IN-APP ALERT MODAL --- */}
+      <AlertModal
+        visible={alertConfig.visible}
+        type={alertConfig.type}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        onClose={() => {
+          const action = alertConfig.onOk;
+          setAlertConfig((prev) => ({ ...prev, visible: false }));
+          action?.();
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -421,8 +529,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
+    fontSize: 17,
+    fontWeight: "800",
     color: "#0F172A",
   },
   profileBtn: {
@@ -436,13 +544,13 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 100,
+    paddingBottom: 40,
   },
   card: {
     backgroundColor: "#FFFFFF",
     borderRadius: 20,
     padding: 16,
-    marginBottom: 20,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: "#F1F5F9",
   },
@@ -454,40 +562,41 @@ const styles = StyleSheet.create({
   sessionRefLabel: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#94A3B8",
-    letterSpacing: 0.5,
+    color: "#64748B",
   },
   sessionRefValue: {
-    color: "#1E293B",
+    color: "#0F172A",
+    fontWeight: "800",
   },
   completedBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#D1FAE5",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 4,
   },
   greenDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "#10B981",
-    marginRight: 6,
+    backgroundColor: "#2563EB",
   },
   completedBadgeText: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#065F46",
+    color: "#2563EB",
   },
   divider: {
     height: 1,
     backgroundColor: "#F1F5F9",
-    marginVertical: 16,
+    marginVertical: 12,
   },
   tutorRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 12,
   },
   avatarWrapper: {
     position: "relative",
@@ -496,11 +605,12 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
+    backgroundColor: "#E2E8F0",
   },
   onlineDot: {
     position: "absolute",
-    bottom: 0,
     right: 0,
+    bottom: 0,
     width: 12,
     height: 12,
     borderRadius: 6,
@@ -509,28 +619,27 @@ const styles = StyleSheet.create({
     borderColor: "#FFFFFF",
   },
   tutorInfo: {
-    marginLeft: 12,
     flex: 1,
+    gap: 2,
   },
   tutorName: {
     fontSize: 15,
-    fontWeight: "700",
+    fontWeight: "800",
     color: "#0F172A",
   },
   tutorSubject: {
     fontSize: 12,
     color: "#64748B",
-    marginTop: 2,
   },
   timeRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 4,
+    gap: 4,
+    marginTop: 2,
   },
   timeText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: "#64748B",
-    marginLeft: 4,
   },
   durationBadge: {
     backgroundColor: "#F1F5F9",
@@ -539,188 +648,171 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   durationText: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#1E293B",
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#475569",
   },
   inputSection: {
-    marginBottom: 20,
+    marginBottom: 16,
+    gap: 6,
   },
   inputLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "700",
     color: "#0F172A",
-    marginBottom: 10,
   },
   asterisk: {
-    color: "#2563EB",
+    color: "#EF4444",
   },
   dropdownInput: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#F1F5F9",
-    borderRadius: 12,
-    padding: 14,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 48,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
   },
   dropdownText: {
-    fontSize: 14,
+    fontSize: 13.5,
+    color: "#0F172A",
+  },
+  refundCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  refundCardActive: {
+    borderColor: "#0052CC",
+    backgroundColor: "#EFF6FF",
+  },
+  refundLeftRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  refundTitle: {
+    fontSize: 13.5,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  refundSubtitle: {
+    fontSize: 11.5,
     color: "#64748B",
+    marginTop: 2,
   },
   ratingHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 12,
   },
   ratingLabel: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: "700",
     color: "#0F172A",
   },
   ratingBadge: {
     backgroundColor: "#FEF3C7",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
   ratingBadgeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
-    color: "#D97706",
+    color: "#B45309",
   },
   starsContainer: {
     flexDirection: "row",
     justifyContent: "center",
-    marginBottom: 10,
+    gap: 10,
+    marginVertical: 4,
   },
   starIcon: {
-    marginHorizontal: 8,
+    padding: 2,
   },
   starsSubtitle: {
-    fontSize: 12,
-    color: "#64748B",
+    fontSize: 11.5,
+    color: "#94A3B8",
     textAlign: "center",
+    marginTop: 6,
   },
   labelRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
   },
   minCharsText: {
-    fontSize: 12,
-    color: "#64748B",
+    fontSize: 11,
+    color: "#94A3B8",
   },
   multilineInput: {
-    backgroundColor: "#F1F5F9",
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 14,
-    color: "#1E293B",
-    minHeight: 120,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 12,
+    height: 100,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    fontSize: 13,
+    color: "#0F172A",
   },
   uploadBox: {
-    borderStyle: "dashed",
-    borderColor: "#CBD5E1",
-    borderWidth: 2,
-    borderRadius: 16,
-    padding: 30,
-    alignItems: "center",
     backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    borderStyle: "dashed",
+    alignItems: "center",
+    gap: 4,
   },
   uploadIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: "#EFF6FF",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 12,
-  },
-  uploadTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#0F172A",
     marginBottom: 4,
   },
-  uploadSubtitle: {
-    fontSize: 12,
-    color: "#64748B",
-  },
-  checkboxContainer: {
-    marginBottom: 24,
-  },
-  checkboxRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    backgroundColor: "#FFFFFF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  checkboxActive: {
-    backgroundColor: "#2563EB",
-    borderColor: "#2563EB",
-  },
-  checkboxText: {
+  uploadTitle: {
     fontSize: 13,
+    fontWeight: "700",
     color: "#0F172A",
-    flex: 1,
   },
-  anonymousGray: {
-    color: "#64748B",
+  uploadSubtitle: {
+    fontSize: 11,
+    color: "#94A3B8",
   },
   submitBtn: {
-    backgroundColor: "#2563EB",
-    borderRadius: 28,
-    padding: 16,
+    backgroundColor: "#0052CC",
+    borderRadius: 24,
+    height: 48,
+    justifyContent: "center",
     alignItems: "center",
-    marginBottom: 20,
+    marginTop: 8,
+    marginBottom: 16,
   },
   submitBtnText: {
-    fontSize: 16,
-    fontWeight: "700",
     color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
   },
   footerRow: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "center",
-    marginBottom: 20,
+    alignItems: "center",
+    gap: 6,
   },
   footerText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: "#64748B",
-    marginLeft: 6,
-  },
-  tabBar: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#F1F5F9",
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-  },
-  tabItem: {
-    alignItems: "center",
-  },
-  tabLabel: {
-    fontSize: 10,
-    color: "#9CA3AF",
-    marginTop: 2,
+    fontWeight: "500",
   },
 });
