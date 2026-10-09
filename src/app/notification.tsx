@@ -54,43 +54,6 @@ export default function NotificationsScreen() {
   const [notificationsList, setNotificationsList] = useState<NotificationItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    let channel: any;
-
-    const setupRealtime = async () => {
-      await fetchNotifications();
-
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const channelName = `notifications_screen_${Date.now()}`;
-      channel = supabase
-        .channel(channelName)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'notifications',
-            filter: `user_id=eq.${user.id}`,
-          },
-          (payload: any) => {
-            console.log('New notification received:', payload);
-            fetchNotifications(); // Refresh the list
-          }
-        )
-        .subscribe();
-    };
-
-    setupRealtime();
-
-    return () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
-    };
-  }, []);
-
   const fetchNotifications = async () => {
     try {
       setIsLoading(true);
@@ -150,6 +113,43 @@ export default function NotificationsScreen() {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    let channel: any;
+
+    const setupRealtime = async () => {
+      await fetchNotifications();
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const channelName = `notifications_screen_${Date.now()}`;
+      channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter: `user_id=eq.${user.id}`,
+          },
+          (payload: any) => {
+            console.log('New notification received:', payload);
+            fetchNotifications(); // Refresh the list
+          }
+        )
+        .subscribe();
+    };
+
+    setupRealtime();
+
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, []);
 
   const handleMarkAllRead = async () => {
     setNotificationsList((prev) =>
@@ -442,6 +442,9 @@ export default function NotificationsScreen() {
         </ScrollView>
 
         {/* --- NOTIFICATION GROUPS --- */}
+        {isLoading ? (
+          <ActivityIndicator size="small" color="#2563EB" style={{ marginVertical: 20 }} />
+        ) : null}
         {renderTimeGroup("TODAY", "3 unread")}
         {renderTimeGroup("YESTERDAY", "Read")}
         {renderTimeGroup("EARLIER THIS WEEK")}
