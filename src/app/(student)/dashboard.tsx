@@ -3,6 +3,7 @@ import {
     Ionicons,
     MaterialCommunityIcons,
 } from "@expo/vector-icons";
+import { StudentHeader } from "../../components/StudentHeader";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { supabase } from "../../../lib/supabase";
@@ -184,21 +185,7 @@ export default function StudentHomeScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP HEADER --- */}
-      <View style={styles.topBar}>
-        <View style={styles.brandContainer}>
-          <View style={styles.brandIcon}>
-            <Ionicons name="book" size={18} color="#FFFFFF" />
-          </View>
-          <Text style={styles.brandTitle}>Student Home</Text>
-        </View>
-
-        <TouchableOpacity
-          style={styles.profileAvatar}
-          onPress={() => router.push("/(student)/StudentProfile")}
-        >
-          <Ionicons name="person" size={18} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
+      <StudentHeader />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

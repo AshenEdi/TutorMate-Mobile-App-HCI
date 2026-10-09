@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
+import { StudentHeader } from "../../components/StudentHeader";
 import {
   ActivityIndicator,
   Image,
@@ -190,23 +191,7 @@ export default function MessagesInboxScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP HEADER BAR --- */}
-      <View style={styles.topBar}>
-        <View style={styles.brandContainer}>
-          <View style={styles.brandIcon}>
-            <Ionicons name="book" size={20} color="#FFFFFF" />
-          </View>
-          <View>
-            <Text style={styles.brandName}>TutorMate</Text>
-            <Text style={styles.brandTitle}>Messages Inbox</Text>
-          </View>
-        </View>
-        <TouchableOpacity
-          style={styles.bellBtn}
-          onPress={() => router.push("/notification" as any)}
-        >
-          <Ionicons name="notifications-outline" size={20} color="#64748B" />
-        </TouchableOpacity>
-      </View>
+      <StudentHeader />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

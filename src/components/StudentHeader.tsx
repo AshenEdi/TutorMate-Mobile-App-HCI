@@ -1,0 +1,70 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import React from 'react';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { NotificationPopover } from './NotificationPopover';
+
+export function StudentHeader() {
+  const router = useRouter();
+
+  return (
+    <View style={styles.topHeader}>
+      <View style={styles.brandContainer}>
+        <View style={styles.brandIcon}>
+          <Ionicons name="book" size={18} color="#FFFFFF" />
+        </View>
+        <Text style={styles.brandTitle}>TutorMate</Text>
+      </View>
+
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <NotificationPopover />
+        <TouchableOpacity
+          activeOpacity={0.7}
+          style={styles.headerProfileBtn}
+          onPress={() => router.push('/(student)/StudentProfile')}
+        >
+          <Ionicons name="person" size={20} color="#FFFFFF" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  topHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 14 : 8,
+    paddingBottom: 10,
+    backgroundColor: '#F8FAFC',
+  },
+  brandContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  brandIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "#2563EB",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  brandTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  headerProfileBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#0284C7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+});
+

@@ -1,6 +1,7 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
+import { StudentHeader } from "../../components/StudentHeader";
 import {
   Alert,
   Image,
@@ -226,24 +227,7 @@ Booking Ref: ${session.bookingRef || "—"}${disputeInfo}
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* --- TOP BRAND BAR --- */}
-      <View style={styles.topBar}>
-        <View style={styles.brandContainer}>
-          <View style={styles.brandIcon}>
-            <Ionicons name="book" size={18} color="#FFFFFF" />
-          </View>
-          <View>
-            <Text style={styles.brandName}>TutorMate</Text>
-            <Text style={styles.brandTitle}>My Sessions</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity 
-          style={styles.profileBtn}
-          onPress={() => router.push("/(student)/StudentProfile")}
-        >
-          <Ionicons name="person" size={20} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
+      <StudentHeader />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
