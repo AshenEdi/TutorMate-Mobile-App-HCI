@@ -3,17 +3,36 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import {
+    Alert,
     ActivityIndicator,
     Image,
+    Modal,
     Platform,
+    Pressable,
     SafeAreaView,
     ScrollView,
     StatusBar,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
     View,
 } from "react-native";
+
+type Review = {
+  id: string;
+  student_id: string;
+  rating: number;
+  comment: string | null;
+  created_at?: string | null;
+  student?: {
+    full_name?: string | null;
+    avatar_url?: string | null;
+  } | null;
+  verified?: boolean;
+  subject?: string | null;
+  likes?: number | null;
+};
 
 const STATS = [
   { icon: "thumbs-up-outline", value: "98%", label: "Recommend" },
@@ -27,15 +46,33 @@ export default function TutorReviewsScreen() {
   const router = useRouter();
   const { tutorId: routeTutorId } = useLocalSearchParams<{ tutorId?: string | string[] }>();
   const [tutor, setTutor] = useState<any>(null);
-  const [reviews, setReviews] = useState<any[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [editingReview, setEditingReview] = useState<Review | null>(null);
+  const [editRating, setEditRating] = useState<number>(5);
+  const [editComment, setEditComment] = useState<string>("");
+  const [savingEdit, setSavingEdit] = useState<boolean>(false);
+  const [deletingReview, setDeletingReview] = useState<Review | null>(null);
+  const [deleting, setDeleting] = useState<boolean>(false);
   const tutorId = Array.isArray(routeTutorId) ? routeTutorId[0] : routeTutorId;
+
+  const showMessage = (title: string, message: string) => {
+    if (Platform.OS === "web") {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadTutorAndReviews() {
       try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (isMounted) setCurrentUserId(user?.id ?? null);
+
         let activeTutorId = tutorId;
         if (!activeTutorId) {
           const { data: firstTutor, error: firstTutorError } = await supabase
@@ -97,6 +134,69 @@ export default function TutorReviewsScreen() {
       isMounted = false;
     };
   }, [tutorId]);
+
+  const handleEditPress = (review: Review) => {
+    setEditRating(Number(review.rating));
+    setEditComment(review.comment || "");
+    setEditingReview(review);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingReview) return;
+
+    if (!Number.isInteger(editRating) || editRating < 1 || editRating > 5 || !editComment.trim()) {
+      showMessage("Error", "Please select a rating from 1 to 5 and enter a review comment.");
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      const { error } = await supabase
+        .from("reviews")
+        .update({ rating: editRating, comment: editComment })
+        .eq("id", editingReview.id);
+      if (error) throw error;
+
+      setReviews((currentReviews) => currentReviews.map((review) => (
+        review.id === editingReview.id
+          ? { ...review, rating: editRating, comment: editComment }
+          : review
+      )));
+      setEditingReview(null);
+      showMessage("Success", "Review updated successfully.");
+    } catch (error) {
+      showMessage("Error", error instanceof Error ? error.message : "Something went wrong.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDeletePress = (review: Review) => {
+    setDeletingReview(review);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingReview) return;
+
+    setDeleting(true);
+    try {
+      const { error } = await supabase
+        .from("reviews")
+        .delete()
+        .eq("id", deletingReview.id);
+      if (error) throw error;
+
+      setReviews((currentReviews) => currentReviews.filter(
+        (review) => review.id !== deletingReview.id,
+      ));
+      setDeletingReview(null);
+      showMessage("Success", "Review deleted successfully.");
+    } catch (error) {
+      showMessage("Error", error instanceof Error ? error.message : "Something went wrong.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const averageRating = reviews.length
     ? reviews.reduce((total, review) => total + Number(review.rating || 0), 0) / reviews.length
@@ -261,7 +361,28 @@ export default function TutorReviewsScreen() {
             <Text style={styles.reviewText}>{review.comment || ""}</Text>
 
             <View style={styles.reviewFooter}>
-              <View style={styles.tagContainer} />
+              {currentUserId !== null && review.student_id === currentUserId ? (
+                <View style={styles.reviewActions}>
+                  <TouchableOpacity
+                    onPress={() => handleEditPress(review)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit review"
+                  >
+                    <Ionicons name="pencil-outline" size={18} color="#64748B" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleDeletePress(review)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Delete review"
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.tagContainer} />
+              )}
               <View style={styles.likeContainer}>
                 <Ionicons name="thumbs-up-outline" size={14} color="#64748B" style={{ marginRight: 4 }} />
                 <Text style={styles.likeText}>{Number(review.likes) || 0}</Text>
@@ -302,6 +423,118 @@ export default function TutorReviewsScreen() {
           <Ionicons name="calendar-outline" size={18} color="#FFFFFF" style={{ marginLeft: 6 }} />
         </TouchableOpacity>
       </View>
+
+      <Modal
+        visible={editingReview !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditingReview(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              if (!savingEdit) setEditingReview(null);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Close edit review modal"
+          />
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit Review</Text>
+            <View style={styles.modalStarRow}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <TouchableOpacity
+                  key={star}
+                  onPress={() => setEditRating(star)}
+                  hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${star} star${star === 1 ? "" : "s"}`}
+                >
+                  <Ionicons
+                    name={star <= editRating ? "star" : "star-outline"}
+                    size={32}
+                    color={star <= editRating ? "#F59E0B" : "#CBD5E1"}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput
+              style={styles.editReviewInput}
+              value={editComment}
+              onChangeText={setEditComment}
+              placeholder="Write your review..."
+              placeholderTextColor="#94A3B8"
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={() => setEditingReview(null)}
+                disabled={savingEdit}
+                accessibilityRole="button"
+              >
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalSaveButton, savingEdit && styles.modalButtonDisabled]}
+                onPress={() => void handleSaveEdit()}
+                disabled={savingEdit}
+                accessibilityRole="button"
+              >
+                <Text style={styles.modalPrimaryButtonText}>
+                  {savingEdit ? "Saving..." : "Save Changes"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={deletingReview !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDeletingReview(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              if (!deleting) setDeletingReview(null);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Close delete review modal"
+          />
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Delete Review</Text>
+            <Text style={styles.deleteReviewMessage}>
+              Are you sure you want to delete this review? This cannot be undone.
+            </Text>
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={() => setDeletingReview(null)}
+                disabled={deleting}
+                accessibilityRole="button"
+              >
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalDeleteButton, deleting && styles.modalButtonDisabled]}
+                onPress={() => void handleConfirmDelete()}
+                disabled={deleting}
+                accessibilityRole="button"
+              >
+                <Text style={styles.modalPrimaryButtonText}>
+                  {deleting ? "Deleting..." : "Delete"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* --- BOTTOM TAB BAR --- */}
       <View style={styles.tabBar}>
@@ -645,6 +878,86 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#64748B",
     fontWeight: "500",
+  },
+  reviewActions: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 24,
+    width: "100%",
+    maxWidth: 420,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginBottom: 16,
+  },
+  modalStarRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
+  editReviewInput: {
+    minHeight: 112,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    padding: 12,
+    color: "#0F172A",
+    marginBottom: 20,
+  },
+  deleteReviewMessage: {
+    fontSize: 15,
+    color: "#64748B",
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  modalButtonRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  modalCancelButton: {
+    backgroundColor: "#F1F5F9",
+  },
+  modalSaveButton: {
+    backgroundColor: "#2563EB",
+  },
+  modalDeleteButton: {
+    backgroundColor: "#EF4444",
+  },
+  modalButtonDisabled: {
+    opacity: 0.7,
+  },
+  modalCancelButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#0F172A",
+  },
+  modalPrimaryButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
   verifiedInfoCard: {
     flexDirection: "row",
