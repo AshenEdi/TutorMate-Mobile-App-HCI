@@ -333,7 +333,7 @@ export default function SessionBookingScreen() {
         delivery_format: delivery,
         hourly_rate: Number(tutorProfile?.hourly_rate) || 45,
         total_price: numericPrice,
-        status: "confirmed",
+        status: "pending",
       })
         .select()
         .single();
