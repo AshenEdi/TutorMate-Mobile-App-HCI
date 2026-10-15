@@ -1,19 +1,27 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Audio } from "expo-av";
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  type AudioPlayer,
+} from "expo-audio";
 import React, { useEffect, useRef, useState } from "react";
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { formatTimeSeconds } from "../../hooks/useVoiceRecorder";
 
 // Global audio coordinator to ensure only ONE voice note plays at any time
-let currentlyPlayingSound: { sound: any; stopCallback: () => void } | null = null;
+let currentlyPlayingSound: {
+  sound: AudioPlayer | HTMLAudioElement;
+  stopCallback: () => void;
+} | null = null;
 
 export function stopAllActiveAudio() {
   if (currentlyPlayingSound) {
     try {
       if (Platform.OS === "web") {
         currentlyPlayingSound.sound?.pause();
-      } else {
-        currentlyPlayingSound.sound?.stopAsync();
+      } else if ("seekTo" in currentlyPlayingSound.sound) {
+        currentlyPlayingSound.sound.pause();
+        void currentlyPlayingSound.sound.seekTo(0);
       }
       currentlyPlayingSound.stopCallback();
     } catch {}
@@ -32,7 +40,8 @@ export function VoiceMessage({ audioUrl, duration = 0, isMe }: VoiceMessageProps
   const [positionSec, setPositionSec] = useState(0);
   const [totalSec, setTotalSec] = useState(duration || 0);
 
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const soundRef = useRef<AudioPlayer | null>(null);
+  const statusSubscriptionRef = useRef<{ remove: () => void } | null>(null);
   const webAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const cleanupAudio = async () => {
@@ -47,10 +56,10 @@ export function VoiceMessage({ audioUrl, duration = 0, isMe }: VoiceMessageProps
       } catch {}
       webAudioRef.current = null;
     } else if (soundRef.current) {
-      try {
-        await soundRef.current.stopAsync();
-        await soundRef.current.unloadAsync();
-      } catch {}
+      soundRef.current.pause();
+      statusSubscriptionRef.current?.remove();
+      statusSubscriptionRef.current = null;
+      soundRef.current.remove();
       soundRef.current = null;
     }
 
@@ -66,7 +75,7 @@ export function VoiceMessage({ audioUrl, duration = 0, isMe }: VoiceMessageProps
       if (Platform.OS === "web" && webAudioRef.current) {
         webAudioRef.current.pause();
       } else if (soundRef.current) {
-        await soundRef.current.pauseAsync();
+        soundRef.current.pause();
       }
       setIsPlaying(false);
       return;
@@ -111,35 +120,32 @@ export function VoiceMessage({ audioUrl, duration = 0, isMe }: VoiceMessageProps
         return;
       }
 
-      // Native Audio playback via expo-av
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
       });
 
       if (soundRef.current) {
-        await soundRef.current.playAsync();
+        soundRef.current.play();
         setIsPlaying(true);
       } else {
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: audioUrl },
-          { shouldPlay: true },
+        const sound = createAudioPlayer(audioUrl, { updateInterval: 250 });
+        statusSubscriptionRef.current = sound.addListener(
+          "playbackStatusUpdate",
           (status) => {
-            if (status.isLoaded) {
-              if (status.positionMillis !== undefined) {
-                setPositionSec(Math.floor(status.positionMillis / 1000));
-              }
-              if (status.durationMillis && (!totalSec || totalSec <= 0)) {
-                setTotalSec(Math.floor(status.durationMillis / 1000));
-              }
-              if (status.didJustFinish) {
-                setIsPlaying(false);
-                setPositionSec(0);
-              }
+            setPositionSec(Math.floor(status.currentTime));
+            if (status.duration > 0 && (!totalSec || totalSec <= 0)) {
+              setTotalSec(Math.floor(status.duration));
+            }
+            if (status.didJustFinish) {
+              setIsPlaying(false);
+              setPositionSec(0);
+              void sound.seekTo(0);
             }
           }
         );
         soundRef.current = sound;
+        sound.play();
         setIsPlaying(true);
       }
 

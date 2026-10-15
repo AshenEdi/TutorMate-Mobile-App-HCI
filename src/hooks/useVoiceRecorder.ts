@@ -1,4 +1,11 @@
-import { Audio } from "expo-av";
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioRecorder,
+  createAudioPlayer,
+  type AudioPlayer,
+} from "expo-audio";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Platform } from "react-native";
 
@@ -35,8 +42,8 @@ export function useVoiceRecorder(): VoiceRecorderHook {
   const [previewPosition, setPreviewPosition] = useState(0);
 
   const durationRef = useRef(0);
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const soundRef = useRef<AudioPlayer | null>(null);
   const timerRef = useRef<any>(null);
 
   // Web fallback refs
@@ -45,10 +52,8 @@ export function useVoiceRecorder(): VoiceRecorderHook {
 
   const cleanupSound = async () => {
     if (soundRef.current) {
-      try {
-        await soundRef.current.stopAsync();
-        await soundRef.current.unloadAsync();
-      } catch {}
+      soundRef.current.pause();
+      soundRef.current.remove();
       soundRef.current = null;
     }
     setIsPlayingPreview(false);
@@ -78,17 +83,16 @@ export function useVoiceRecorder(): VoiceRecorderHook {
         });
       }
 
-      if (recordingRef.current) {
+      if (recorder.isRecording) {
         setIsRecording(false);
-        await recordingRef.current.stopAndUnloadAsync();
-        const uri = recordingRef.current.getURI();
+        await recorder.stop();
+        const uri = recorder.uri;
         const duration = durationRef.current || 1;
         setRecordedUri(uri);
         setRecordedDuration(duration);
-        recordingRef.current = null;
 
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
+        await setAudioModeAsync({
+          allowsRecording: false,
         });
 
         return uri;
@@ -99,7 +103,7 @@ export function useVoiceRecorder(): VoiceRecorderHook {
 
     setIsRecording(false);
     return null;
-  }, []);
+  }, [recorder]);
 
   const cancelRecording = useCallback(async () => {
     if (timerRef.current) {
@@ -112,12 +116,13 @@ export function useVoiceRecorder(): VoiceRecorderHook {
         mediaRecorderRef.current.stream?.getTracks()?.forEach((t: any) => t.stop());
         mediaRecorderRef.current = null;
         audioChunksRef.current = [];
-      } else if (recordingRef.current) {
-        await recordingRef.current.stopAndUnloadAsync();
-        recordingRef.current = null;
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      } else if (recorder.isRecording) {
+        await recorder.stop();
+        await setAudioModeAsync({ allowsRecording: false });
       }
-    } catch {}
+    } catch (err) {
+      console.warn("Error canceling voice recording:", err);
+    }
 
     await cleanupSound();
     setIsRecording(false);
@@ -125,7 +130,7 @@ export function useVoiceRecorder(): VoiceRecorderHook {
     setRecordingDuration(0);
     setRecordedDuration(0);
     durationRef.current = 0;
-  }, []);
+  }, [recorder]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -166,9 +171,9 @@ export function useVoiceRecorder(): VoiceRecorderHook {
         return;
       }
 
-      // Native iOS / Android with expo-av
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== "granted") {
+      // Native iOS / Android recording with expo-audio
+      const { granted } = await requestRecordingPermissionsAsync();
+      if (!granted) {
         Alert.alert(
           "Microphone Permission",
           "TutorMate requires microphone access to record voice messages."
@@ -176,15 +181,13 @@ export function useVoiceRecorder(): VoiceRecorderHook {
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      recordingRef.current = recording;
+      await recorder.prepareToRecordAsync();
+      recorder.record();
       setIsRecording(true);
 
       timerRef.current = setInterval(() => {
@@ -199,34 +202,30 @@ export function useVoiceRecorder(): VoiceRecorderHook {
       console.warn("Error starting voice recording:", err);
       Alert.alert("Recording Error", "Could not start voice recording.");
     }
-  }, [stopRecording]);
+  }, [recorder, stopRecording]);
 
   const playPreview = useCallback(async () => {
     if (!recordedUri) return;
 
     try {
       if (soundRef.current) {
-        await soundRef.current.playAsync();
+        soundRef.current.play();
         setIsPlayingPreview(true);
         return;
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: recordedUri },
-        { shouldPlay: true },
-        (status) => {
-          if (status.isLoaded) {
-            if (status.positionMillis !== undefined) {
-              setPreviewPosition(Math.floor(status.positionMillis / 1000));
-            }
-            if (status.didJustFinish) {
-              setIsPlayingPreview(false);
-              setPreviewPosition(0);
-            }
-          }
+      await setAudioModeAsync({ playsInSilentMode: true });
+      const sound = createAudioPlayer(recordedUri, { updateInterval: 250 });
+      sound.addListener("playbackStatusUpdate", (status) => {
+        setPreviewPosition(Math.floor(status.currentTime));
+        if (status.didJustFinish) {
+          setIsPlayingPreview(false);
+          setPreviewPosition(0);
+          void sound.seekTo(0);
         }
-      );
+      });
       soundRef.current = sound;
+      sound.play();
       setIsPlayingPreview(true);
     } catch (err) {
       console.warn("Preview playback error:", err);
@@ -235,10 +234,8 @@ export function useVoiceRecorder(): VoiceRecorderHook {
 
   const pausePreview = useCallback(async () => {
     if (soundRef.current) {
-      try {
-        await soundRef.current.pauseAsync();
-        setIsPlayingPreview(false);
-      } catch {}
+      soundRef.current.pause();
+      setIsPlayingPreview(false);
     }
   }, []);
 
@@ -250,11 +247,8 @@ export function useVoiceRecorder(): VoiceRecorderHook {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       void cleanupSound();
-      if (recordingRef.current) {
-        void recordingRef.current.stopAndUnloadAsync();
-      }
     };
-  }, []);
+  }, [recorder]);
 
   return {
     isRecording,
