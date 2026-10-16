@@ -1,6 +1,12 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
 export type TutorBottomTab =
   | "sessions"
@@ -138,10 +144,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
     alignItems: "center",
     backgroundColor: "#FFFFFF",
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
-    paddingVertical: 8,
-    paddingBottom: 8,
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   navItem: {
     alignItems: "center",

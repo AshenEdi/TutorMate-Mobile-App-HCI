@@ -759,7 +759,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingBottom: 100,
   },
   headerRow: {
     flexDirection: "row",
@@ -1126,9 +1126,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
     alignItems: "center",
     backgroundColor: "#FFFFFF",
-    paddingVertical: 10,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   tabItem: {
     alignItems: "center",

@@ -362,7 +362,11 @@ export default function SubmitReportScreen() {
         <TouchableOpacity
           style={[styles.refundCard, requestRefund && styles.refundCardActive]}
           activeOpacity={0.8}
-          onPress={() => setRequestRefund(!requestRefund)}
+          onPress={() => {
+            const shouldRequestRefund = !requestRefund;
+            setRequestRefund(shouldRequestRefund);
+            if (shouldRequestRefund && rating > 2) setRating(2);
+          }}
         >
           <View style={styles.refundLeftRow}>
             <MaterialCommunityIcons
@@ -390,11 +394,21 @@ export default function SubmitReportScreen() {
 
           <View style={styles.starsContainer}>
             {[1, 2, 3, 4, 5].map((star) => (
-              <TouchableOpacity key={star} onPress={() => setRating(star)}>
+              <TouchableOpacity
+                key={star}
+                disabled={requestRefund && star > 2}
+                onPress={() => setRating(star)}
+              >
                 <Ionicons
                   name="star"
                   size={36}
-                  color={star <= rating ? "#F59E0B" : "#E2E8F0"}
+                  color={
+                    requestRefund && star > 2
+                      ? "#CBD5E1"
+                      : star <= rating
+                        ? "#F59E0B"
+                        : "#E2E8F0"
+                  }
                   style={styles.starIcon}
                 />
               </TouchableOpacity>

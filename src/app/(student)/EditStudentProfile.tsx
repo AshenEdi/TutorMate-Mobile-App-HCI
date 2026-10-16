@@ -1,19 +1,19 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Image,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Image,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { supabase } from "../../../lib/supabase";
 import { AlertModal, AlertType } from "../../components/ui/AlertModal";
@@ -49,7 +49,7 @@ export default function EditStudentProfileScreen() {
     title: string,
     message: string,
     type: AlertType = "error",
-    onOk?: () => void
+    onOk?: () => void,
   ) => {
     setAlertConfig({
       visible: true,
@@ -74,7 +74,9 @@ export default function EditStudentProfileScreen() {
 
         const { data, error } = await supabase
           .from("profiles")
-          .select("full_name, email, phone_number, education, location, avatar_url")
+          .select(
+            "full_name, email, phone_number, education, location, avatar_url",
+          )
           .eq("id", user.id)
           .single();
         if (error) throw error;
@@ -116,7 +118,8 @@ export default function EditStudentProfileScreen() {
             reject(new Error("Image conversion did not return a data URI."));
           }
         };
-        reader.onerror = () => reject(reader.error ?? new Error("Image conversion failed."));
+        reader.onerror = () =>
+          reject(reader.error ?? new Error("Image conversion failed."));
         reader.readAsDataURL(blob);
       });
     }
@@ -137,9 +140,14 @@ export default function EditStudentProfileScreen() {
 
   const handleChangePhoto = async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        showAlert("Permission Needed", "Please allow access to your photos.", "warning");
+        showAlert(
+          "Permission Needed",
+          "Please allow access to your photos.",
+          "warning",
+        );
         return;
       }
 
@@ -199,7 +207,11 @@ export default function EditStudentProfileScreen() {
       setTimeout(() => setShowToast(false), 3000);
     } catch (error) {
       console.error("Failed to save student profile:", error);
-      showAlert("Error", error instanceof Error ? error.message : "Unable to save your profile.", "error");
+      showAlert(
+        "Error",
+        error instanceof Error ? error.message : "Unable to save your profile.",
+        "error",
+      );
     } finally {
       setSaving(false);
     }
@@ -216,26 +228,6 @@ export default function EditStudentProfileScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-
-      {/* --- TOP BRAND BAR --- */}
-      <View style={styles.topBar}>
-        <View style={styles.brandContainer}>
-          <View style={styles.brandIcon}>
-            <Ionicons name="book" size={18} color="#FFFFFF" />
-          </View>
-          <View>
-            <Text style={styles.brandName}>TutorMate</Text>
-            <Text style={styles.brandTitle}>Profile</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity 
-           style={styles.bellBtn}
-            onPress={() => router.push("/notification")}
-      >
-          <Ionicons name="notifications-outline" size={20} color="#1E293B" />
-        </TouchableOpacity>
-      </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -287,7 +279,12 @@ export default function EditStudentProfileScreen() {
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Full Name</Text>
             <View style={styles.inputWrapper}>
-              <Ionicons name="person-outline" size={18} color="#64748B" style={styles.inputIcon} />
+              <Ionicons
+                name="person-outline"
+                size={18}
+                color="#64748B"
+                style={styles.inputIcon}
+              />
               <TextInput
                 style={styles.input}
                 value={fullName}
@@ -308,7 +305,12 @@ export default function EditStudentProfileScreen() {
               </View>
             </View>
             <View style={styles.inputWrapper}>
-              <Ionicons name="mail-outline" size={18} color="#64748B" style={styles.inputIcon} />
+              <Ionicons
+                name="mail-outline"
+                size={18}
+                color="#64748B"
+                style={styles.inputIcon}
+              />
               <TextInput
                 style={styles.input}
                 value={email}
@@ -322,7 +324,12 @@ export default function EditStudentProfileScreen() {
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Phone Number</Text>
             <View style={styles.inputWrapper}>
-              <Ionicons name="call-outline" size={18} color="#64748B" style={styles.inputIcon} />
+              <Ionicons
+                name="call-outline"
+                size={18}
+                color="#64748B"
+                style={styles.inputIcon}
+              />
               <TextInput
                 style={styles.input}
                 value={phoneNumber}
@@ -350,7 +357,12 @@ export default function EditStudentProfileScreen() {
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Location</Text>
             <View style={styles.inputWrapper}>
-              <Ionicons name="school-outline" size={18} color="#64748B" style={styles.inputIcon} />
+              <Ionicons
+                name="school-outline"
+                size={18}
+                color="#64748B"
+                style={styles.inputIcon}
+              />
               <TextInput
                 style={styles.input}
                 value={location}
@@ -364,12 +376,26 @@ export default function EditStudentProfileScreen() {
 
         {/* --- ACTION BUTTONS --- */}
         <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
-            <Ionicons name="checkmark" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-            <Text style={styles.saveBtnText}>{saving ? "Saving..." : "Save Changes"}</Text>
+          <TouchableOpacity
+            style={styles.saveBtn}
+            onPress={handleSave}
+            disabled={saving}
+          >
+            <Ionicons
+              name="checkmark"
+              size={20}
+              color="#FFFFFF"
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.saveBtnText}>
+              {saving ? "Saving..." : "Save Changes"}
+            </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()}>
+          <TouchableOpacity
+            style={styles.cancelBtn}
+            onPress={() => router.back()}
+          >
             <Text style={styles.cancelBtnText}>Cancel</Text>
           </TouchableOpacity>
         </View>
@@ -387,7 +413,10 @@ export default function EditStudentProfileScreen() {
 
       {/* --- BOTTOM TAB BAR --- */}
       <View style={styles.tabBar}>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/dashboard")}>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => router.push("/(student)/dashboard")}
+        >
           <Ionicons name="home-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Home</Text>
         </TouchableOpacity>
@@ -395,15 +424,24 @@ export default function EditStudentProfileScreen() {
           <Ionicons name="search-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Search</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/MySessions")}>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => router.push("/(student)/MySessions")}
+        >
           <Ionicons name="calendar-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Sessions</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/MessagesInbox")}>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => router.push("/(student)/MessagesInbox")}
+        >
           <Ionicons name="chatbox-outline" size={22} color="#9CA3AF" />
           <Text style={styles.tabLabel}>Messages</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(student)/StudentProfile")}>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => router.push("/(student)/StudentProfile")}
+        >
           <Ionicons name="person" size={22} color="#2563EB" />
           <Text style={[styles.tabLabel, styles.tabLabelActive]}>Profile</Text>
         </TouchableOpacity>
@@ -682,7 +720,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
     alignItems: "center",
     backgroundColor: "#FFFFFF",
-    paddingVertical: 10,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
     position: "absolute",

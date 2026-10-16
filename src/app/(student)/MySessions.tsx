@@ -497,7 +497,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 40,
+    paddingBottom: 100,
   },
   filterScroll: {
     gap: 8,
@@ -870,10 +870,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "center",
-    paddingVertical: 8,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
     backgroundColor: "#FFFFFF",
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   tabItem: {
     alignItems: "center",
