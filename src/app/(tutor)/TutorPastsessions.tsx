@@ -494,12 +494,19 @@ export default function TutorPastSessionsScreen() {
                     <Text style={styles.studentName}>{item.studentName}</Text>
                     <View style={styles.subjectTagsRow}>
                       <View style={styles.subjectTag}>
-                        <Text style={styles.subjectTagText}>{item.subject}</Text>
+                        <Text
+                          style={styles.subjectTagText}
+                          numberOfLines={2}
+                          ellipsizeMode="tail"
+                        >
+                          {item.subject}
+                        </Text>
                       </View>
                       {item.sessionMode ? (
                         <Text style={styles.sessionModeText}>{item.sessionMode}</Text>
                       ) : null}
                     </View>
+                    <Text style={styles.payoutStatusText}>{item.payoutStatus}</Text>
                   </View>
                 </View>
 
@@ -512,7 +519,6 @@ export default function TutorPastSessionsScreen() {
                   >
                     {item.payoutAmount}
                   </Text>
-                  <Text style={styles.payoutStatusText}>{item.payoutStatus}</Text>
                 </View>
               </View>
 
@@ -1087,7 +1093,8 @@ const styles = StyleSheet.create({
   sessionCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    padding: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#EDF2F7',
@@ -1152,14 +1159,16 @@ const styles = StyleSheet.create({
   },
   studentPayoutRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     marginBottom: 10,
   },
   studentInfoGroup: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flex: 1,
+    minWidth: 0,
+    marginRight: 8,
   },
   avatarWrap: {
     position: 'relative',
@@ -1199,6 +1208,7 @@ const styles = StyleSheet.create({
   nameMeta: {
     marginLeft: 10,
     flex: 1,
+    minWidth: 0,
   },
   studentName: {
     fontSize: 15.5,
@@ -1216,11 +1226,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
+    flexShrink: 1,
+    minWidth: 0,
   },
   subjectTagText: {
     fontSize: 11,
     fontWeight: '700',
     color: '#1D4ED8',
+    flexShrink: 1,
   },
   sessionModeText: {
     fontSize: 11.5,
@@ -1228,7 +1241,7 @@ const styles = StyleSheet.create({
   },
   payoutGroup: {
     alignItems: 'flex-end',
-    marginLeft: 8,
+    minWidth: 80,
   },
   payoutAmount: {
     fontSize: 16.5,
@@ -1242,6 +1255,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#64748B',
     marginTop: 1,
+    flexShrink: 1,
   },
   reviewCard: {
     backgroundColor: '#F8FAFC',
