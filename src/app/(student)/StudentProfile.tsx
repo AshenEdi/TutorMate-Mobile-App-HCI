@@ -1,7 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { StudentHeader } from "../../components/StudentHeader";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../../lib/supabase";
 import { AlertModal, AlertType } from "../../components/ui/AlertModal";
@@ -462,9 +461,6 @@ export default function UserProfileScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-
-      {/* --- TOP BRAND BAR --- */}
-      <StudentHeader title="Profile" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

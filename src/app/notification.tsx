@@ -315,7 +315,6 @@ export default function NotificationsScreen() {
                       color="#2563EB"
                       style={{ marginRight: 4 }}
                     />
-                    <Text style={styles.calendarBtnText}>Add to Calendar</Text>
                   </TouchableOpacity>
                 )}
 
@@ -360,20 +359,6 @@ export default function NotificationsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-
-      {/* --- BRAND HEADER --- */}
-      <View style={styles.topBar}>
-        <View style={styles.brandContainer}>
-          <View style={styles.brandIcon}>
-            <Ionicons name="book" size={18} color="#FFFFFF" />
-          </View>
-          <View>
-            <Text style={styles.brandName}>TutorMate</Text>
-            <Text style={styles.brandTitle}>Profile</Text>
-          </View>
-        </View>
-      </View>
-
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -389,7 +374,6 @@ export default function NotificationsScreen() {
 
           <View style={styles.pageTitleRow}>
             <Text style={styles.pageHeaderTitle}>Notifications</Text>
-            <View style={styles.headerActiveDot} />
           </View>
 
           <TouchableOpacity
@@ -404,25 +388,7 @@ export default function NotificationsScreen() {
             />
             <Text style={styles.markReadText}>Mark all read</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity style={styles.moreBtn}>
-            <Ionicons name="ellipsis-vertical" size={18} color="#64748B" />
-          </TouchableOpacity>
         </View>
-
-        {/* --- NOTIFICATION PREFERENCES BANNER --- */}
-        <TouchableOpacity style={styles.prefBanner}>
-          <View style={styles.prefIconBg}>
-            <Ionicons name="options-outline" size={18} color="#0D9488" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.prefTitle}>Notification Preferences</Text>
-            <Text style={styles.prefSubtitle}>
-              Push, SMS, and WhatsApp alerts active
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
-        </TouchableOpacity>
 
         {/* --- CATEGORY TABS --- */}
         <ScrollView
