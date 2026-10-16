@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -10,10 +11,9 @@ import {
   Text,
   TouchableOpacity,
   View,
-  ActivityIndicator,
 } from "react-native";
-import { markAllNotificationsAsRead } from "../services/notificationService";
 import { supabase } from "../../lib/supabase";
+import { markAllNotificationsAsRead } from "../services/notificationService";
 
 // --- TYPES ---
 interface NotificationItem {
@@ -26,7 +26,7 @@ interface NotificationItem {
   category: string;
   reference_id?: string;
   created_at: string;
-  
+
   // Computed fields for UI
   timestamp?: string;
   timeGroup?: "TODAY" | "YESTERDAY" | "EARLIER THIS WEEK";
@@ -51,13 +51,17 @@ const STUDENT_NAV_TABS = [
 export default function NotificationsScreen() {
   const router = useRouter();
   const [selectedTab, setSelectedTab] = useState("all");
-  const [notificationsList, setNotificationsList] = useState<NotificationItem[]>([]);
+  const [notificationsList, setNotificationsList] = useState<
+    NotificationItem[]
+  >([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchNotifications = async () => {
     try {
       setIsLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
 
       const { data, error } = await supabase
@@ -67,7 +71,7 @@ export default function NotificationsScreen() {
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      
+
       // Process data for UI
       const processedData = (data || []).map((item: any) => {
         const date = new Date(item.created_at);
@@ -78,7 +82,8 @@ export default function NotificationsScreen() {
         const diffMins = Math.floor(diffMs / (1000 * 60));
 
         let timestamp = "";
-        let timeGroup: "TODAY" | "YESTERDAY" | "EARLIER THIS WEEK" = "EARLIER THIS WEEK";
+        let timeGroup: "TODAY" | "YESTERDAY" | "EARLIER THIS WEEK" =
+          "EARLIER THIS WEEK";
 
         if (diffDays === 0) {
           timeGroup = "TODAY";
@@ -95,8 +100,8 @@ export default function NotificationsScreen() {
           item.type === "dispute"
             ? "session"
             : item.type === "moderation"
-            ? "message"
-            : item.type;
+              ? "message"
+              : item.type;
 
         return {
           ...item,
@@ -120,24 +125,26 @@ export default function NotificationsScreen() {
     const setupRealtime = async () => {
       await fetchNotifications();
 
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
 
       const channelName = `notifications_screen_${Date.now()}`;
       channel = supabase
         .channel(channelName)
         .on(
-          'postgres_changes',
+          "postgres_changes",
           {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'notifications',
+            event: "INSERT",
+            schema: "public",
+            table: "notifications",
             filter: `user_id=eq.${user.id}`,
           },
           (payload: any) => {
-            console.log('New notification received:', payload);
+            console.log("New notification received:", payload);
             fetchNotifications(); // Refresh the list
-          }
+          },
         )
         .subscribe();
     };
@@ -155,7 +162,9 @@ export default function NotificationsScreen() {
     setNotificationsList((prev) =>
       prev.map((item: NotificationItem) => ({ ...item, is_unread: false })),
     );
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (user) {
       await markAllNotificationsAsRead(user.id);
     }
@@ -175,9 +184,7 @@ export default function NotificationsScreen() {
           n.type === "booking"
         );
       if (selectedTab === "messages")
-        return (
-          n.category?.toLowerCase() === "messages" || n.type === "message"
-        );
+        return n.category?.toLowerCase() === "messages" || n.type === "message";
       if (selectedTab === "reminders")
         return (
           n.category?.toLowerCase() === "reminders" ||
@@ -443,7 +450,11 @@ export default function NotificationsScreen() {
 
         {/* --- NOTIFICATION GROUPS --- */}
         {isLoading ? (
-          <ActivityIndicator size="small" color="#2563EB" style={{ marginVertical: 20 }} />
+          <ActivityIndicator
+            size="small"
+            color="#2563EB"
+            style={{ marginVertical: 20 }}
+          />
         ) : null}
         {renderTimeGroup("TODAY", "3 unread")}
         {renderTimeGroup("YESTERDAY", "Read")}
@@ -471,11 +482,7 @@ export default function NotificationsScreen() {
             }}
           >
             <View style={styles.tabIconWrapper}>
-              <Ionicons
-                name={tab.icon}
-                size={22}
-                color="#9CA3AF"
-              />
+              <Ionicons name={tab.icon} size={22} color="#9CA3AF" />
             </View>
             <Text style={styles.tabLabel}>{tab.name}</Text>
           </TouchableOpacity>
@@ -814,9 +821,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
     alignItems: "center",
     backgroundColor: "#FFFFFF",
-    paddingVertical: 10,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   tabItem: {
     alignItems: "center",

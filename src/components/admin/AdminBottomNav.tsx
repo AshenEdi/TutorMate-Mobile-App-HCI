@@ -1,6 +1,11 @@
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
 export type AdminTab = "overview" | "users" | "reports";
 
@@ -9,10 +14,7 @@ interface AdminBottomNavProps {
   onTabPress: (tab: AdminTab) => void;
 }
 
-export function AdminBottomNav({
-  activeTab,
-  onTabPress,
-}: AdminBottomNavProps) {
+export function AdminBottomNav({ activeTab, onTabPress }: AdminBottomNavProps) {
   return (
     <View style={styles.container}>
       <TouchableOpacity
@@ -81,13 +83,17 @@ export function AdminBottomNav({
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-around",
+    alignItems: "center",
     backgroundColor: "#FFFFFF",
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
-    paddingVertical: 10,
-    paddingBottom: 10,
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   tabItem: {
     alignItems: "center",
