@@ -49,11 +49,10 @@ export default function TutorProfileDetailsScreen() {
 
   useEffect(() => {
     if (authLoading) return;
+    if (!user || authProfile?.role !== 'tutor') return;
     let isMounted = true;
     (async () => {
       try {
-        if (!user) throw new Error('You must be signed in to view your tutor profile.');
-
         const { data, error } = await supabase
           .from('profiles')
           .select('*')
