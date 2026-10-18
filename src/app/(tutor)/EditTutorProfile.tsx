@@ -34,7 +34,7 @@ interface EditProfileFormData {
 
 export default function EditProfileScreen() {
   const router = useRouter();
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const [formData, setFormData] = useState<EditProfileFormData>({
     fullName: '',
     email: '',
@@ -65,10 +65,10 @@ export default function EditProfileScreen() {
 
   useEffect(() => {
     if (authLoading) return;
+    if (!user || profile?.role !== 'tutor') return;
     let active = true;
     const loadProfile = async () => {
       try {
-        if (!user) throw new Error('You must be signed in to edit your tutor profile.');
         const { data, error } = await supabase
           .from('profiles')
           .select('*')
@@ -97,7 +97,7 @@ export default function EditProfileScreen() {
     };
     void loadProfile();
     return () => { active = false; };
-  }, [authLoading, user]);
+  }, [authLoading, profile, user]);
 
   const handleSaveChanges = async () => {
     try {
